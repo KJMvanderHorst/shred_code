@@ -152,7 +152,7 @@ def _period_split_window_indices(
             f"test_pct={test_pct}, val_pct={val_pct}, period_length={period_length}."
         )
 
-    n_windows = n_frames - lags + 1
+    n_windows = n_frames - lags
     window_starts = np.arange(n_windows)
     target_frames = window_starts + (lags - 1)
     train_mask = np.ones(n_windows, dtype=bool)
