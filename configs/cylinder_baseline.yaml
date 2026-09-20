@@ -5,8 +5,9 @@ defaults:
 
 data:
   mat: data/CYLINDER_ALL.mat
-  test_size: 10           # last `test_size` windows held out (sequential split)
-  val_size: 20            # last `val_size` windows of the remainder used for validation
+  period_length: 30      # 150 snapshots = 5 periods of 30 frames
+  test_pct: 10           # last 10% of each period is test
+  val_pct: 20            # last 20% of the remaining prefix of each period is validation
 
 model:
   num_sensors: 3

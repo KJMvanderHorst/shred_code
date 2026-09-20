@@ -73,8 +73,9 @@ Key knobs in [configs/cylinder_baseline.yaml](configs/cylinder_baseline.yaml):
 | `model.placement` | `QR` | `QR` (greedy QR-pivot) or `random` |
 | `model.hidden_size` / `hidden_layers` | 64 / 2 | LSTM hidden size and stack depth |
 | `model.l1` / `l2` | 350 / 400 | Decoder MLP widths |
-| `data.test_size` | 10 | Last N windows held out for testing |
-| `data.val_size` | 20 | Validation windows preceding the test set |
+| `data.period_length` | 30 | Frames per period; dataset is 5 periods × 30 frames |
+| `data.test_pct` | 10 | Last 10% of each period is used for testing |
+| `data.val_pct` | 20 | Last 20% of the remaining prefix of each period is used for validation |
 | `train.epochs` / `patience` | 1000 / 5 | Max epochs + patience (× 20 epochs of no improvement) |
 
 ## Sensor noise model (per sensor)
@@ -139,7 +140,7 @@ The sweep is the long-running job — runtime scales as `len(sensor_counts) × l
 
 ## Implementation notes
 
-- The split is **sequential** over sliding windows (last `test_size` for test, preceding `val_size` for val, rest for train) — chosen for the small cylinder dataset (~150 snapshots). Paper experiments on SST/turbulence use random interleaved splits since they have many more frames.
+- The split is **period-local and sequential within each 30-frame period**: the last `test_pct` of each period is test, the last `val_pct` of the preceding prefix is validation, and the earlier frames remain training. This keeps the hold-out windows at the tail of every period, matching the 150-snapshot dataset structure (5 periods × 30 frames). Paper experiments on SST/turbulence use random interleaved splits since they have many more frames.
 - `MinMaxScaler` is fit on training rows only and applied globally (matches paper).
 - `fit()` validates every 20 epochs, restores best parameters on early stopping (matches paper's `models.fit`).
 - QR/POD uses the *unscaled* training POD basis and reconstructs from unscaled sensor measurements at the test timestamps.
