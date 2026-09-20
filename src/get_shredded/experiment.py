@@ -91,6 +91,98 @@ def _aggregate_rel_error(pred: np.ndarray, truth: np.ndarray) -> float:
     return float(np.linalg.norm(pred - truth) / np.linalg.norm(truth))
 
 
+def resolve_split_counts(
+    *,
+    n_frames: int,
+    period_length: int | None = None,
+    test_pct: float | int | None = None,
+    val_pct: float | int | None = None,
+    test_size: int | None = None,
+    val_size: int | None = None,
+) -> tuple[int, int]:
+    """Resolve train/validation/test frame counts for the configured split.
+
+    Percent-based splits are interpreted as the last portion of each period, with
+    the validation block taken from the remaining prefix of that same period.
+    The legacy count-based interface is still accepted as a fallback.
+    """
+    if test_pct is not None or val_pct is not None:
+        if period_length is None:
+            raise ValueError("period_length must be set when using percentage-based splits")
+        if period_length <= 0:
+            raise ValueError(f"period_length must be positive, got {period_length}")
+        if test_pct is None:
+            test_pct = 0.0
+        if val_pct is None:
+            val_pct = 0.0
+        test_count = int(round(period_length * float(test_pct) / 100.0))
+        val_count = int(round(period_length * float(val_pct) / 100.0))
+        if test_count + val_count >= period_length:
+            raise ValueError(
+                f"The configured test/validation percentages leave no training frames in a period: "
+                f"test_pct={test_pct}, val_pct={val_pct}, period_length={period_length}."
+            )
+        return test_count, val_count
+
+    if test_size is None or val_size is None:
+        raise ValueError("test_size and val_size must be provided when not using a percentage split")
+    if test_size + val_size >= n_frames:
+        raise ValueError(f"test_size + val_size ({test_size + val_size}) >= n_frames ({n_frames})")
+    return int(test_size), int(val_size)
+
+
+def _period_split_window_indices(
+    *,
+    n_frames: int,
+    lags: int,
+    period_length: int,
+    test_pct: float,
+    val_pct: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if lags < 1:
+        raise ValueError(f"lags must be >= 1, got {lags}")
+    if period_length <= 0:
+        raise ValueError(f"period_length must be positive, got {period_length}")
+
+    test_count = max(0, int(round(period_length * float(test_pct) / 100.0)))
+    val_count = max(0, int(round(period_length * float(val_pct) / 100.0)))
+    if test_count + val_count >= period_length:
+        raise ValueError(
+            f"The configured test/validation percentages leave no training frames in a period: "
+            f"test_pct={test_pct}, val_pct={val_pct}, period_length={period_length}."
+        )
+
+    n_windows = n_frames - lags + 1
+    window_starts = np.arange(n_windows)
+    target_frames = window_starts + (lags - 1)
+    train_mask = np.ones(n_windows, dtype=bool)
+    val_mask = np.zeros(n_windows, dtype=bool)
+    test_mask = np.zeros(n_windows, dtype=bool)
+
+    for period_start in range(0, n_frames, period_length):
+        period_end = min(period_start + period_length, n_frames)
+        if period_end <= period_start:
+            continue
+
+        test_start = period_end - test_count
+        val_start = max(period_start, test_start - val_count)
+        if test_count == 0:
+            test_start = period_end
+        if val_count == 0:
+            val_start = test_start
+
+        if test_count > 0:
+            test_mask |= (target_frames >= test_start) & (target_frames < period_end)
+        if val_count > 0:
+            val_mask |= (target_frames >= val_start) & (target_frames < test_start)
+        train_mask &= ~((target_frames >= val_start) & (target_frames < period_end))
+
+    train_indices = window_starts[train_mask]
+    valid_indices = window_starts[val_mask]
+    test_indices = window_starts[test_mask]
+    return train_indices, valid_indices, test_indices
+
+
 def _build_scenario_noisy(
     data: np.ndarray,
     scenario: str,
@@ -157,8 +249,11 @@ def run_experiment(
     num_sensors: int,
     lags: int,
     placement: str,
-    test_size: int,
-    val_size: int,
+    test_size: int | None = None,
+    val_size: int | None = None,
+    period_length: int | None = None,
+    test_pct: float | int | None = None,
+    val_pct: float | int | None = None,
     hidden_size: int,
     hidden_layers: int,
     l1: int,
@@ -184,15 +279,32 @@ def run_experiment(
     load_X, nx, ny = load_cylinder_data(mat_path)  # (N, m)
     n, m = load_X.shape
 
-    # Sequential split over (n - lags) sliding windows.
-    n_windows = n - lags
-    if test_size + val_size >= n_windows:
-        raise ValueError(f"test_size + val_size ({test_size + val_size}) >= n_windows ({n_windows})")
-    train_end = n_windows - test_size - val_size
-    val_end = n_windows - test_size
-    train_indices = np.arange(0, train_end)
-    valid_indices = np.arange(train_end, val_end)
-    test_indices = np.arange(val_end, n_windows)
+    if period_length is not None and (test_pct is not None or val_pct is not None):
+        test_count, val_count = resolve_split_counts(
+            n_frames=n,
+            period_length=period_length,
+            test_pct=test_pct,
+            val_pct=val_pct,
+        )
+        train_indices, valid_indices, test_indices = _period_split_window_indices(
+            n_frames=n,
+            lags=lags,
+            period_length=period_length,
+            test_pct=float(test_pct or 0.0),
+            val_pct=float(val_pct or 0.0),
+        )
+    else:
+        if test_size is None or val_size is None:
+            raise ValueError("test_size and val_size must be provided unless a percentage split is configured")
+        # Sequential split over (n - lags) sliding windows.
+        n_windows = n - lags
+        if test_size + val_size >= n_windows:
+            raise ValueError(f"test_size + val_size ({test_size + val_size}) >= n_windows ({n_windows})")
+        train_end = n_windows - test_size - val_size
+        val_end = n_windows - test_size
+        train_indices = np.arange(0, train_end)
+        valid_indices = np.arange(train_end, val_end)
+        test_indices = np.arange(val_end, n_windows)
 
     if placement == "QR":
         sensor_locations, U_r = qr_place(load_X[train_indices].T, num_sensors)
@@ -309,8 +421,11 @@ def run_robustness_comparison(
     num_sensors: int,
     lags: int,
     placement: str,
-    test_size: int,
-    val_size: int,
+    test_size: int | None = None,
+    val_size: int | None = None,
+    period_length: int | None = None,
+    test_pct: float | int | None = None,
+    val_pct: float | int | None = None,
     hidden_size: int,
     hidden_layers: int,
     l1: int,
@@ -332,14 +447,25 @@ def run_robustness_comparison(
     load_X, nx, ny = load_cylinder_data(mat_path)
     n, m = load_X.shape
 
-    n_windows = n - lags
-    if test_size + val_size >= n_windows:
-        raise ValueError(f"test_size + val_size ({test_size + val_size}) >= n_windows ({n_windows})")
-    train_end = n_windows - test_size - val_size
-    val_end = n_windows - test_size
-    train_indices = np.arange(0, train_end)
-    valid_indices = np.arange(train_end, val_end)
-    test_indices = np.arange(val_end, n_windows)
+    if period_length is not None and (test_pct is not None or val_pct is not None):
+        train_indices, valid_indices, test_indices = _period_split_window_indices(
+            n_frames=n,
+            lags=lags,
+            period_length=period_length,
+            test_pct=float(test_pct or 0.0),
+            val_pct=float(val_pct or 0.0),
+        )
+    else:
+        if test_size is None or val_size is None:
+            raise ValueError("test_size and val_size must be provided unless a percentage split is configured")
+        n_windows = n - lags
+        if test_size + val_size >= n_windows:
+            raise ValueError(f"test_size + val_size ({test_size + val_size}) >= n_windows ({n_windows})")
+        train_end = n_windows - test_size - val_size
+        val_end = n_windows - test_size
+        train_indices = np.arange(0, train_end)
+        valid_indices = np.arange(train_end, val_end)
+        test_indices = np.arange(val_end, n_windows)
 
     if placement == "QR":
         sensor_locations, U_r = qr_place(load_X[train_indices].T, num_sensors)
