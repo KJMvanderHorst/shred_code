@@ -4,9 +4,8 @@ defaults:
 
 data:
   mat: data/CYLINDER_ALL.mat
-  period_length: 30
-  test_pct: 10
-  val_pct: 20
+  test_size: 10
+  val_size: 20
 
 model:
   lags: 10

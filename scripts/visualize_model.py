@@ -21,7 +21,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from get_shredded.data import build_sensor_windows, load_cylinder_data, qr_place, qrpod_reconstruct
-from get_shredded.experiment import RunResult, _period_split_window_indices
+from get_shredded.experiment import RunResult
 from get_shredded.model import SDN, SHRED, TimeSeriesDataset
 from get_shredded.noise import apply_sensor_noise, resolve_sensor_modes
 from get_shredded.plotting import (
@@ -93,13 +93,8 @@ def _build_result_from_checkpoint(
 
     num_sensors = int(cfg.model.num_sensors)
     lags = int(cfg.model.lags)
-    period_length = int(cfg.data.get("period_length", 30))
-    test_pct = float(cfg.data.get("test_pct", 0.0)) if "test_pct" in cfg.data else None
-    val_pct = float(cfg.data.get("val_pct", 0.0)) if "val_pct" in cfg.data else None
-    if test_pct is None and "test_size" in cfg.data:
-        test_size = int(cfg.data.test_size)
-    if val_pct is None and "val_size" in cfg.data:
-        val_size = int(cfg.data.val_size)
+    test_size = int(cfg.data.test_size)
+    val_size = int(cfg.data.val_size)
     hidden_size = int(cfg.model.hidden_size)
     hidden_layers = int(cfg.model.hidden_layers)
     l1 = int(cfg.model.l1)
@@ -126,23 +121,14 @@ def _build_result_from_checkpoint(
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    if test_pct is not None and val_pct is not None:
-        train_indices, valid_indices, test_indices = _period_split_window_indices(
-            n_frames=n,
-            lags=lags,
-            period_length=period_length,
-            test_pct=test_pct,
-            val_pct=val_pct,
-        )
-    else:
-        n_windows = n - lags
-        if test_size + val_size >= n_windows:
-            raise ValueError(f"test_size + val_size ({test_size + val_size}) >= n_windows ({n_windows})")
-        train_end = n_windows - test_size - val_size
-        val_end = n_windows - test_size
-        train_indices = np.arange(0, train_end)
-        valid_indices = np.arange(train_end, val_end)
-        test_indices = np.arange(val_end, n_windows)
+    n_windows = n - lags
+    if test_size + val_size >= n_windows:
+        raise ValueError(f"test_size + val_size ({test_size + val_size}) >= n_windows ({n_windows})")
+    train_end = n_windows - test_size - val_size
+    val_end = n_windows - test_size
+    train_indices = np.arange(0, train_end)
+    valid_indices = np.arange(train_end, val_end)
+    test_indices = np.arange(val_end, n_windows)
 
     sensor_locations = _as_int_array(ckpt["sensor_locations"])
     _, U_r = qr_place(load_X[train_indices].T, num_sensors)
