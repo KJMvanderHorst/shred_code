@@ -28,6 +28,17 @@ get-shredded/
   outputs/                             # all results land here (created on first run)
 ```
 
+## Senseiver baseline
+
+A separate `Senseiver` baseline is provided in `src/get_shredded/senseiver.py` and exported through the package (`get_shredded.Senseiver`). It follows the paper's single-frame sparse reconstruction pipeline:
+
+- sine/cosine spatial positional encoding on continuous coordinates,
+- sensor encoder with a latent bottleneck and shared recurrent attention blocks,
+- decoder cross-attention from query coordinates to the latent representation,
+- a forward interface of `model(sensor_values, sensor_coordinates, query_coordinates)`.
+
+This baseline is kept separate from the SHRED/SDN codepaths and does not alter the current experimental behavior.
+
 ## Setup
 
 Requires Python ≥ 3.10. Using [`uv`](https://github.com/astral-sh/uv):

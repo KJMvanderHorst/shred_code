@@ -15,6 +15,7 @@ from .augmentation import make_batch_augmenter
 from .data import build_sensor_windows, load_cylinder_data, qr_place, qrpod_reconstruct
 from .model import SDN, SHRED, TimeSeriesDataset, fit
 from .noise import apply_sensor_noise, resolve_sensor_modes
+from .senseiver import Senseiver
 
 
 @dataclass
@@ -50,6 +51,13 @@ class RunResult:
     # Trained model weights for checkpoint export / later visualization.
     shred_state_dict: dict[str, torch.Tensor]
     sdn_state_dict: dict[str, torch.Tensor]
+
+    # Optional Senseiver results for direct comparison against the existing baselines.
+    senseiver_recon: np.ndarray | None = None
+    senseiver_err: float | None = None
+    senseiver_err_per_snap: np.ndarray | None = None
+    senseiver_val_history: np.ndarray | None = None
+    senseiver_state_dict: dict[str, torch.Tensor] | None = None
 
 
 SCENARIOS = ["gaussian", "dropout", "hybrid", "burst"]
@@ -89,6 +97,42 @@ def _per_snapshot_rel_error(pred: np.ndarray, truth: np.ndarray) -> np.ndarray:
 
 def _aggregate_rel_error(pred: np.ndarray, truth: np.ndarray) -> float:
     return float(np.linalg.norm(pred - truth) / np.linalg.norm(truth))
+
+
+class SenseiverSnapshotWrapper(torch.nn.Module):
+    """Wrap Senseiver so it can be trained with the existing fit() helper."""
+
+    def __init__(
+        self,
+        model: Senseiver,
+        sensor_coordinates: torch.Tensor,
+        query_coordinates: torch.Tensor,
+    ) -> None:
+        super().__init__()
+        self.model = model
+        self.register_buffer("sensor_coordinates", sensor_coordinates)
+        self.register_buffer("query_coordinates", query_coordinates)
+
+    def forward(self, sensor_values: torch.Tensor) -> torch.Tensor:
+        batch_size = sensor_values.shape[0]
+        sensor_coordinates = self.sensor_coordinates.expand(batch_size, -1, -1)
+        query_coordinates = self.query_coordinates.expand(batch_size, -1, -1)
+        out = self.model(sensor_values, sensor_coordinates, query_coordinates)
+        return out.squeeze(-1)
+
+
+def _sensor_coordinates_for_grid(sensor_locations: np.ndarray, nx: int, ny: int) -> np.ndarray:
+    rows, cols = np.unravel_index(sensor_locations, (nx, ny), order="F")
+    xs = rows / max(nx - 1, 1)
+    ys = cols / max(ny - 1, 1)
+    return np.stack([xs, ys], axis=-1).astype(np.float32)
+
+
+def _query_coordinates_for_grid(nx: int, ny: int) -> np.ndarray:
+    rows, cols = np.unravel_index(np.arange(nx * ny), (nx, ny), order="F")
+    xs = rows / max(nx - 1, 1)
+    ys = cols / max(ny - 1, 1)
+    return np.stack([xs, ys], axis=-1).astype(np.float32)
 
 
 def _build_scenario_noisy(
@@ -176,6 +220,12 @@ def run_experiment(
     noise_auto_extend: bool = True,
     noise_default_mode: str = "true",
     noise_seed: int | None = None,
+    senseiver_enabled: bool = True,
+    senseiver_num_latents: int = 8,
+    senseiver_latent_dim: int = 32,
+    senseiver_num_frequencies: int = 8,
+    senseiver_num_heads: int = 4,
+    senseiver_dropout: float = 0.0,
     verbose: bool = True,
 ) -> RunResult:
     np.random.seed(seed)
@@ -256,10 +306,59 @@ def run_experiment(
     sdn_hist = fit(sdn, train_ds_sdn, valid_ds_sdn, batch_size=batch_size,
                    num_epochs=epochs, lr=lr, verbose=verbose, patience=patience)
 
+    senseiver_model = None
+    senseiver_hist = None
+    senseiver_recon = None
+    if senseiver_enabled:
+        sensor_coords = torch.tensor(
+            _sensor_coordinates_for_grid(np.asarray(sensor_locations), nx, ny),
+            dtype=torch.float32,
+            device=device,
+        )
+        query_coords = torch.tensor(
+            _query_coordinates_for_grid(nx, ny),
+            dtype=torch.float32,
+            device=device,
+        )
+        senseiver = Senseiver(
+            input_channels=1,
+            output_channels=1,
+            spatial_dim=2,
+            num_latents=senseiver_num_latents,
+            latent_dim=senseiver_latent_dim,
+            num_frequencies=senseiver_num_frequencies,
+            num_heads=senseiver_num_heads,
+            dropout=senseiver_dropout,
+        ).to(device)
+        senseiver_model = SenseiverSnapshotWrapper(senseiver, sensor_coords, query_coords)
+
+        train_snapshot_sensor = to_tensor(transformed_X[train_indices + lags - 1][:, sensor_locations]).unsqueeze(-1)
+        valid_snapshot_sensor = to_tensor(transformed_X[valid_indices + lags - 1][:, sensor_locations]).unsqueeze(-1)
+        test_snapshot_sensor = to_tensor(transformed_X[test_indices + lags - 1][:, sensor_locations]).unsqueeze(-1)
+
+        train_ds_senseiver = TimeSeriesDataset(train_snapshot_sensor, train_out)
+        valid_ds_senseiver = TimeSeriesDataset(valid_snapshot_sensor, valid_out)
+        senseiver_hist = fit(
+            senseiver_model,
+            train_ds_senseiver,
+            valid_ds_senseiver,
+            batch_size=batch_size,
+            num_epochs=epochs,
+            lr=lr,
+            verbose=verbose,
+            patience=patience,
+        )
+
     shred.eval(); sdn.eval()
+    if senseiver_model is not None:
+        senseiver_model.eval()
     with torch.no_grad():
         shred_recon = sc.inverse_transform(shred(test_ds.X).detach().cpu().numpy())
         sdn_recon = sc.inverse_transform(sdn(test_ds_sdn.X).detach().cpu().numpy())
+        if senseiver_model is not None:
+            senseiver_recon = sc.inverse_transform(
+                senseiver_model(test_snapshot_sensor).detach().cpu().numpy()
+            )
     truth = sc.inverse_transform(test_ds.Y.detach().cpu().numpy())
 
     truth_indices = test_indices + lags - 1
@@ -274,6 +373,12 @@ def run_experiment(
             rng=rng_qr,
         )
     qrpod_recon = qrpod_reconstruct(sensor_measurements, np.asarray(sensor_locations), U_r, m)
+
+    senseiver_err = None if senseiver_recon is None else _aggregate_rel_error(senseiver_recon, truth)
+    senseiver_err_per_snap = None if senseiver_recon is None else _per_snapshot_rel_error(senseiver_recon, truth)
+    senseiver_val_history = None if senseiver_hist is None else (
+        senseiver_hist.numpy() if hasattr(senseiver_hist, "numpy") else np.asarray(senseiver_hist)
+    )
 
     return RunResult(
         shred_recon=shred_recon,
@@ -296,6 +401,11 @@ def run_experiment(
         lags=lags,
         shred_state_dict={k: v.detach().cpu() for k, v in shred.state_dict().items()},
         sdn_state_dict={k: v.detach().cpu() for k, v in sdn.state_dict().items()},
+        senseiver_recon=senseiver_recon,
+        senseiver_err=senseiver_err,
+        senseiver_err_per_snap=senseiver_err_per_snap,
+        senseiver_val_history=senseiver_val_history,
+        senseiver_state_dict=(None if senseiver_model is None else {k: v.detach().cpu() for k, v in senseiver_model.state_dict().items()}),
     )
 
 

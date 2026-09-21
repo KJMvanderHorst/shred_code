@@ -35,7 +35,7 @@ def plot_reconstruction_panel(
     snapshot_indices: list[int],
     save_path: Path,
 ) -> None:
-    """Grid: rows = snapshots, cols = (truth+sensors, SHRED, SDN, QR/POD).
+    """Grid: rows = snapshots, cols = (truth+sensors, SHRED, SDN, Senseiver, QR/POD).
     Sensor locations overlaid on the truth column. Saves a PNG."""
     nx, ny = _infer_grid(result.truth.shape[1], result.nx, result.ny)
     sensor_rows, sensor_cols = np.unravel_index(result.sensor_locations, (nx, ny), order="F")
@@ -44,8 +44,10 @@ def plot_reconstruction_panel(
         ("Ground truth + sensors", result.truth),
         (f"SHRED  (err={result.shred_err:.3f})", result.shred_recon),
         (f"SDN    (err={result.sdn_err:.3f})", result.sdn_recon),
-        (f"QR/POD (err={result.qrpod_err:.3f})", result.qrpod_recon),
     ]
+    if getattr(result, "senseiver_recon", None) is not None:
+        cols.append((f"Senseiver (err={result.senseiver_err:.3f})", result.senseiver_recon))
+    cols.append((f"QR/POD (err={result.qrpod_err:.3f})", result.qrpod_recon))
     n_rows = len(snapshot_indices)
     n_cols = len(cols)
     vmax = _plot_limits(result.truth)
@@ -85,8 +87,10 @@ def animate_reconstructions(result: RunResult, save_path: Path, fps: int = 4) ->
         ("Ground truth", result.truth, True),
         ("SHRED", result.shred_recon, False),
         ("SDN", result.sdn_recon, False),
-        ("QR/POD", result.qrpod_recon, False),
     ]
+    if getattr(result, "senseiver_recon", None) is not None:
+        panels.append(("Senseiver", result.senseiver_recon, False))
+    panels.append(("QR/POD", result.qrpod_recon, False))
     vmax = _plot_limits(result.truth)
     norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
 
@@ -126,6 +130,8 @@ def plot_per_snapshot_error(result: RunResult, save_path: Path) -> None:
     x = np.arange(1, len(result.shred_err_per_snap) + 1)
     ax.plot(x, result.shred_err_per_snap, marker="o", label="SHRED")
     ax.plot(x, result.sdn_err_per_snap, marker="s", label="SDN")
+    if getattr(result, "senseiver_err_per_snap", None) is not None:
+        ax.plot(x, result.senseiver_err_per_snap, marker="D", label="Senseiver")
     ax.plot(x, result.qrpod_err_per_snap, marker="^", label="QR/POD")
     ax.set_xlabel("Test snapshot index")
     ax.set_ylabel("Relative L2 error")
@@ -144,6 +150,9 @@ def plot_training_curves(result: RunResult, save_path: Path, val_every: int = 20
     epochs_sdn = np.arange(1, len(result.sdn_val_history) + 1) * val_every
     ax.plot(epochs_shred, result.shred_val_history, marker="o", label="SHRED")
     ax.plot(epochs_sdn, result.sdn_val_history, marker="s", label="SDN")
+    if getattr(result, "senseiver_val_history", None) is not None:
+        epochs_senseiver = np.arange(1, len(result.senseiver_val_history) + 1) * val_every
+        ax.plot(epochs_senseiver, result.senseiver_val_history, marker="D", label="Senseiver")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Validation relative L2 error")
     ax.set_yscale("log")

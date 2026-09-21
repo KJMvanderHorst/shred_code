@@ -23,6 +23,7 @@ if str(SRC_DIR) not in sys.path:
 from get_shredded.data import build_sensor_windows, load_cylinder_data, qr_place, qrpod_reconstruct
 from get_shredded.experiment import RunResult
 from get_shredded.model import SDN, SHRED, TimeSeriesDataset
+from get_shredded.senseiver import Senseiver
 from get_shredded.noise import apply_sensor_noise, resolve_sensor_modes
 from get_shredded.plotting import (
     animate_reconstructions,
@@ -192,12 +193,56 @@ def _build_result_from_checkpoint(
     sdn = SDN(num_sensors, m, l1=l1, l2=l2, dropout=dropout).to(device)
     sdn.load_state_dict(ckpt["sdn_state_dict"])
 
+    truth = sc.inverse_transform(test_ds.Y.detach().cpu().numpy())
+
+    senseiver_recon = None
+    senseiver_err = None
+    senseiver_err_per_snap = None
+    senseiver_val_history = np.asarray(ckpt.get("senseiver_val_history", []))
+    if "senseiver_state_dict" in ckpt:
+        senseiver_cfg = cfg.get("senseiver", OmegaConf.create({}))
+        senseiver = Senseiver(
+            input_channels=1,
+            output_channels=1,
+            spatial_dim=2,
+            num_latents=int(senseiver_cfg.get("num_latents", 8)),
+            latent_dim=int(senseiver_cfg.get("latent_dim", 32)),
+            num_frequencies=int(senseiver_cfg.get("num_frequencies", 8)),
+            num_heads=int(senseiver_cfg.get("num_heads", 4)),
+            dropout=float(senseiver_cfg.get("dropout", 0.0)),
+        ).to(device)
+        senseiver.load_state_dict({
+            k.replace("model.", ""): v
+            for k, v in ckpt["senseiver_state_dict"].items()
+            if not k.startswith("sensor_coordinates") and not k.startswith("query_coordinates")
+        })
+        rows, cols = np.unravel_index(sensor_locations, (nx, ny), order="F")
+        sensor_coords = np.stack([
+            rows / max(nx - 1, 1),
+            cols / max(ny - 1, 1),
+        ], axis=-1).astype(np.float32)
+        rows_all, cols_all = np.unravel_index(np.arange(nx * ny), (nx, ny), order="F")
+        query_coords = np.stack([
+            rows_all / max(nx - 1, 1),
+            cols_all / max(ny - 1, 1),
+        ], axis=-1).astype(np.float32)
+
+        test_sensor_vals = transformed_X[test_indices + lags - 1][:, sensor_locations].astype(np.float32)
+        with torch.no_grad():
+            senseiver_recon = sc.inverse_transform(
+                senseiver(
+                    torch.tensor(test_sensor_vals[..., None], dtype=torch.float32, device=device),
+                    torch.tensor(sensor_coords[None].repeat(len(test_sensor_vals), 1, 1), dtype=torch.float32, device=device),
+                    torch.tensor(query_coords[None].repeat(len(test_sensor_vals), 1, 1), dtype=torch.float32, device=device),
+                ).squeeze(-1).detach().cpu().numpy()
+            )
+        senseiver_err, senseiver_err_per_snap = _rel_errors(senseiver_recon, truth)
+
     shred.eval()
     sdn.eval()
     with torch.no_grad():
         shred_recon = sc.inverse_transform(shred(test_ds.X).detach().cpu().numpy())
         sdn_recon = sc.inverse_transform(sdn(test_ds_sdn.X).detach().cpu().numpy())
-    truth = sc.inverse_transform(test_ds.Y.detach().cpu().numpy())
 
     truth_indices = test_indices + lags - 1
     sensor_measurements = load_X[truth_indices][:, sensor_locations]
@@ -237,6 +282,11 @@ def _build_result_from_checkpoint(
         lags=lags,
         shred_state_dict=ckpt["shred_state_dict"],
         sdn_state_dict=ckpt["sdn_state_dict"],
+        senseiver_recon=senseiver_recon,
+        senseiver_err=senseiver_err,
+        senseiver_err_per_snap=senseiver_err_per_snap,
+        senseiver_val_history=senseiver_val_history,
+        senseiver_state_dict=ckpt.get("senseiver_state_dict"),
     )
 
     outputs_root = Path(

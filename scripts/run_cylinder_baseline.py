@@ -50,13 +50,21 @@ def main(cfg: DictConfig) -> None:
         noise_auto_extend=bool(cfg.noise.auto_extend),
         noise_default_mode=str(cfg.noise.default_mode),
         noise_seed=int(cfg.noise.seed) if cfg.noise.seed is not None else None,
+        senseiver_enabled=bool(cfg.senseiver.enabled),
+        senseiver_num_latents=int(cfg.senseiver.num_latents),
+        senseiver_latent_dim=int(cfg.senseiver.latent_dim),
+        senseiver_num_frequencies=int(cfg.senseiver.num_frequencies),
+        senseiver_num_heads=int(cfg.senseiver.num_heads),
+        senseiver_dropout=float(cfg.senseiver.dropout),
         verbose=True,
     )
 
     print(f"\nNum sensors: {result.num_sensors} | Placement: {result.placement} | Lags: {result.lags}")
-    print(f"SHRED   relative L2 error: {result.shred_err:.6f}")
-    print(f"SDN     relative L2 error: {result.sdn_err:.6f}")
-    print(f"QR/POD  relative L2 error: {result.qrpod_err:.6f}")
+    print(f"SHRED     relative L2 error: {result.shred_err:.6f}")
+    print(f"SDN       relative L2 error: {result.sdn_err:.6f}")
+    if result.senseiver_err is not None:
+        print(f"Senseiver relative L2 error: {result.senseiver_err:.6f}")
+    print(f"QR/POD    relative L2 error: {result.qrpod_err:.6f}")
 
     outputs_root = Path(to_absolute_path(cfg.outputs.root))
     recon_dir = outputs_root / "reconstructions"
@@ -80,12 +88,15 @@ def main(cfg: DictConfig) -> None:
                 "sensor_locations": result.sensor_locations,
                 "shred_state_dict": result.shred_state_dict,
                 "sdn_state_dict": result.sdn_state_dict,
+                "senseiver_state_dict": result.senseiver_state_dict,
                 "shred_val_history": result.shred_val_history,
                 "sdn_val_history": result.sdn_val_history,
+                "senseiver_val_history": result.senseiver_val_history,
                 "config": OmegaConf.to_container(cfg, resolve=True),
                 "metrics": {
                     "shred_err": result.shred_err,
                     "sdn_err": result.sdn_err,
+                    "senseiver_err": result.senseiver_err,
                     "qrpod_err": result.qrpod_err,
                 },
             },
