@@ -47,6 +47,12 @@ def plot_reconstruction_panel(
     ]
     if getattr(result, "senseiver_recon", None) is not None:
         cols.append((f"Senseiver (err={result.senseiver_err:.3f})", result.senseiver_recon))
+    if getattr(result, "senseiver_sdn_recon", None) is not None:
+        cols.append((f"SenseiverSDN (err={result.senseiver_sdn_err:.3f})", result.senseiver_sdn_recon))
+    if getattr(result, "robust_shred_v1_recon", None) is not None:
+        cols.append((f"RobustSHREDv1 (err={result.robust_shred_v1_err:.3f})", result.robust_shred_v1_recon))
+    if getattr(result, "robust_shred_v2_recon", None) is not None:
+        cols.append((f"RobustSHREDv2 (err={result.robust_shred_v2_err:.3f})", result.robust_shred_v2_recon))
     cols.append((f"QR/POD (err={result.qrpod_err:.3f})", result.qrpod_recon))
     n_rows = len(snapshot_indices)
     n_cols = len(cols)
@@ -90,6 +96,12 @@ def animate_reconstructions(result: RunResult, save_path: Path, fps: int = 4) ->
     ]
     if getattr(result, "senseiver_recon", None) is not None:
         panels.append(("Senseiver", result.senseiver_recon, False))
+    if getattr(result, "senseiver_sdn_recon", None) is not None:
+        panels.append(("SenseiverSDN", result.senseiver_sdn_recon, False))
+    if getattr(result, "robust_shred_v1_recon", None) is not None:
+        panels.append(("RobustSHREDv1", result.robust_shred_v1_recon, False))
+    if getattr(result, "robust_shred_v2_recon", None) is not None:
+        panels.append(("RobustSHREDv2", result.robust_shred_v2_recon, False))
     panels.append(("QR/POD", result.qrpod_recon, False))
     vmax = _plot_limits(result.truth)
     norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
@@ -132,6 +144,12 @@ def plot_per_snapshot_error(result: RunResult, save_path: Path) -> None:
     ax.plot(x, result.sdn_err_per_snap, marker="s", label="SDN")
     if getattr(result, "senseiver_err_per_snap", None) is not None:
         ax.plot(x, result.senseiver_err_per_snap, marker="D", label="Senseiver")
+    if getattr(result, "senseiver_sdn_err_per_snap", None) is not None:
+        ax.plot(x, result.senseiver_sdn_err_per_snap, marker="P", label="SenseiverSDN")
+    if getattr(result, "robust_shred_v1_err_per_snap", None) is not None:
+        ax.plot(x, result.robust_shred_v1_err_per_snap, marker="X", label="RobustSHREDv1")
+    if getattr(result, "robust_shred_v2_err_per_snap", None) is not None:
+        ax.plot(x, result.robust_shred_v2_err_per_snap, marker="h", label="RobustSHREDv2")
     ax.plot(x, result.qrpod_err_per_snap, marker="^", label="QR/POD")
     ax.set_xlabel("Test snapshot index")
     ax.set_ylabel("Relative L2 error")
@@ -153,6 +171,15 @@ def plot_training_curves(result: RunResult, save_path: Path, val_every: int = 20
     if getattr(result, "senseiver_val_history", None) is not None:
         epochs_senseiver = np.arange(1, len(result.senseiver_val_history) + 1) * val_every
         ax.plot(epochs_senseiver, result.senseiver_val_history, marker="D", label="Senseiver")
+    if getattr(result, "senseiver_sdn_val_history", None) is not None:
+        epochs_senseiver_sdn = np.arange(1, len(result.senseiver_sdn_val_history) + 1) * val_every
+        ax.plot(epochs_senseiver_sdn, result.senseiver_sdn_val_history, marker="P", label="SenseiverSDN")
+    if getattr(result, "robust_shred_v1_val_history", None) is not None:
+        epochs_v1 = np.arange(1, len(result.robust_shred_v1_val_history) + 1) * val_every
+        ax.plot(epochs_v1, result.robust_shred_v1_val_history, marker="X", label="RobustSHREDv1")
+    if getattr(result, "robust_shred_v2_val_history", None) is not None:
+        epochs_v2 = np.arange(1, len(result.robust_shred_v2_val_history) + 1) * val_every
+        ax.plot(epochs_v2, result.robust_shred_v2_val_history, marker="h", label="RobustSHREDv2")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Validation relative L2 error")
     ax.set_yscale("log")
@@ -219,6 +246,16 @@ _COLORS = {
     "SDN-hybrid":     "#238B45",
     "SHRED-burst":    "#6A3D9A",   # purple
     "SDN-burst":      "#6A3D9A",
+    "RobustSHREDv1-clean": "#4DB6AC",
+    "RobustSHREDv1-gaussian": "#00897B",
+    "RobustSHREDv1-dropout": "#00897B",
+    "RobustSHREDv1-hybrid": "#00897B",
+    "RobustSHREDv1-burst": "#00897B",
+    "RobustSHREDv2-clean": "#E0A458",
+    "RobustSHREDv2-gaussian": "#C17C00",
+    "RobustSHREDv2-dropout": "#C17C00",
+    "RobustSHREDv2-hybrid": "#C17C00",
+    "RobustSHREDv2-burst": "#C17C00",
     "QR-POD":         "#D6804F",   # orange
 }
 
@@ -230,12 +267,21 @@ def _col_display_name(model_name: str, scenario: str) -> str:
         return "SHRED-augmented"
     if model_name == f"SDN-{scenario}":
         return "SDN-augmented"
+    if model_name == f"RobustSHREDv1-{scenario}":
+        return "RobustSHREDv1-augmented"
+    if model_name == f"RobustSHREDv2-{scenario}":
+        return "RobustSHREDv2-augmented"
     return model_name
 
 
 def _scenario_model_order(result: RobustnessResult, scenario: str) -> list:
     """Return [SHRED-clean, SHRED-{scenario}, SDN-clean, SDN-{scenario}, QR-POD]."""
-    wanted = ["SHRED-clean", f"SHRED-{scenario}", "SDN-clean", f"SDN-{scenario}", "QR-POD"]
+    wanted = [
+        "SHRED-clean", f"SHRED-{scenario}",
+        "RobustSHREDv1-clean", f"RobustSHREDv1-{scenario}",
+        "RobustSHREDv2-clean", f"RobustSHREDv2-{scenario}",
+        "SDN-clean", f"SDN-{scenario}", "QR-POD",
+    ]
     by_name = {m.name: m for m in result.models}
     return [by_name[n] for n in wanted if n in by_name]
 
@@ -547,6 +593,10 @@ _SWEEP_STYLES: dict[str, dict] = {
     "SDN-clean":       dict(color="#8CC98D", ls="-",  marker="s", lw=2, ms=6),
     "SDN-augmented":   dict(color="#238B45", ls="--", marker="s", lw=2, ms=6),
     "QR-POD":          dict(color="#D6804F", ls="-",  marker="^", lw=2, ms=6),
+    "RobustSHREDv1-clean": dict(color="#4DB6AC", ls="-", marker="D", lw=2, ms=6),
+    "RobustSHREDv1-augmented": dict(color="#00897B", ls="--", marker="D", lw=2, ms=6),
+    "RobustSHREDv2-clean": dict(color="#E0A458", ls="-", marker="P", lw=2, ms=6),
+    "RobustSHREDv2-augmented": dict(color="#C17C00", ls="--", marker="P", lw=2, ms=6),
 }
 
 
@@ -572,7 +622,12 @@ def plot_robustness_sweep(
         sharey=False,
     )
 
-    line_keys = ["SHRED-clean", "SHRED-augmented", "SDN-clean", "SDN-augmented", "QR-POD"]
+    line_keys = [
+        "SHRED-clean", "SHRED-augmented",
+        "RobustSHREDv1-clean", "RobustSHREDv1-augmented",
+        "RobustSHREDv2-clean", "RobustSHREDv2-augmented",
+        "SDN-clean", "SDN-augmented", "QR-POD",
+    ]
 
     for row, scenario in enumerate(SCENARIOS):
         for col, placement in enumerate(placements):
@@ -589,13 +644,25 @@ def plot_robustness_sweep(
                 by_name = {m.name: m for m in res.models}
                 aug_name = f"SHRED-{scenario}"
                 sdn_aug_name = f"SDN-{scenario}"
-                if aug_name not in by_name:
+                required = ["SHRED-clean", aug_name, "SDN-clean", sdn_aug_name, "QR-POD"]
+                robust_names = [
+                    f"RobustSHREDv1-clean", f"RobustSHREDv1-{scenario}",
+                    f"RobustSHREDv2-clean", f"RobustSHREDv2-{scenario}",
+                ]
+                present_robust = [name for name in robust_names if name in by_name]
+                if any(name not in by_name for name in required):
                     continue
                 series["SHRED-clean"].append(by_name["SHRED-clean"].err_noisy[scenario])
                 series["SHRED-augmented"].append(by_name[aug_name].err_noisy[scenario])
                 series["SDN-clean"].append(by_name["SDN-clean"].err_noisy[scenario])
                 series["SDN-augmented"].append(by_name[sdn_aug_name].err_noisy[scenario])
                 series["QR-POD"].append(by_name["QR-POD"].err_noisy[scenario])
+                for family in ("RobustSHREDv1", "RobustSHREDv2"):
+                    for suffix in ("clean", "augmented"):
+                        key = f"{family}-{suffix}"
+                        source = f"{family}-{scenario}" if suffix == "augmented" else f"{family}-clean"
+                        if source in by_name:
+                            series[key].append(by_name[source].err_noisy[scenario])
                 valid_counts.append(n)
 
             if not valid_counts:
@@ -603,7 +670,8 @@ def plot_robustness_sweep(
                 continue
 
             for key in line_keys:
-                ax.plot(valid_counts, series[key], label=key, **_SWEEP_STYLES[key])
+                if len(series[key]) == len(valid_counts):
+                    ax.plot(valid_counts, series[key], label=key, **_SWEEP_STYLES[key])
 
             ax.set_yscale("log")
             ax.set_xlabel("Number of sensors", fontsize=11)

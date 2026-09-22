@@ -8,7 +8,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
-from .senseiver import Senseiver, spatial_positional_encoding
+from .senseiver import Senseiver, SenseiverSDN, spatial_positional_encoding
 
 __all__ = [
     "SHRED",
@@ -17,6 +17,7 @@ __all__ = [
     "fit",
     "forecast",
     "Senseiver",
+    "SenseiverSDN",
     "spatial_positional_encoding",
 ]
 
@@ -35,7 +36,7 @@ class TimeSeriesDataset(Dataset):
 
 
 class SHRED(nn.Module):
-    """SHallow REcurrent Decoder: stacked LSTM over a trajectory of sensor
+    """SHallow REcurrent Decoder: stacked GRU over a trajectory of sensor
     measurements followed by a 3-layer fully-connected decoder that maps the
     final hidden state to the full high-dimensional state.
 
@@ -53,7 +54,7 @@ class SHRED(nn.Module):
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
-        self.lstm = nn.LSTM(
+        self.rnn = nn.GRU(
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=hidden_layers,
@@ -69,9 +70,7 @@ class SHRED(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         device = next(self.parameters()).device
         h_0 = torch.zeros(self.hidden_layers, x.size(0), self.hidden_size, device=device)
-        c_0 = torch.zeros(self.hidden_layers, x.size(0), self.hidden_size, device=device)
-
-        _, (h_out, _) = self.lstm(x, (h_0, c_0))
+        _, h_out = self.rnn(x, h_0)
         h_out = h_out[-1].view(-1, self.hidden_size)
 
         out = torch.relu(self.dropout(self.linear1(h_out)))

@@ -7,7 +7,13 @@ import torch
 from torch import Tensor, nn
 
 
-__all__ = ["Senseiver", "spatial_positional_encoding", "sine_cosine_spatial_encoding"]
+__all__ = [
+    "Senseiver",
+    "SenseiverEncoder",
+    "SenseiverSDN",
+    "spatial_positional_encoding",
+    "sine_cosine_spatial_encoding",
+]
 
 
 def spatial_positional_encoding(coords: Tensor, num_frequencies: int) -> Tensor:
@@ -59,13 +65,12 @@ class _LatentAttentionBlock(nn.Module):
         return self.out_proj(out) + query
 
 
-class Senseiver(nn.Module):
-    """Senseiver-style sparse reconstruction model for a single frame."""
+class SenseiverEncoder(nn.Module):
+    """Coordinate-aware Senseiver encoder with a fixed-size latent output."""
 
     def __init__(
         self,
         input_channels: int = 1,
-        output_channels: int = 1,
         spatial_dim: int = 2,
         num_latents: int = 8,
         latent_dim: int = 32,
@@ -73,21 +78,12 @@ class Senseiver(nn.Module):
         num_heads: int = 4,
         encoder_hidden_dim: int | None = None,
         dropout: float = 0.0,
-        **kwargs: Any,
     ) -> None:
         super().__init__()
-        if "n_latents" in kwargs:
-            num_latents = int(kwargs["n_latents"])
-        if "n_heads" in kwargs:
-            num_heads = int(kwargs["n_heads"])
-        if "hidden_dim" in kwargs:
-            latent_dim = int(kwargs["hidden_dim"])
-
         if encoder_hidden_dim is None:
             encoder_hidden_dim = latent_dim
 
         self.input_channels = int(input_channels)
-        self.output_channels = int(output_channels)
         self.spatial_dim = int(spatial_dim)
         self.num_latents = int(num_latents)
         self.latent_dim = int(latent_dim)
@@ -96,9 +92,7 @@ class Senseiver(nn.Module):
         self.positional_dim = 2 * self.spatial_dim * self.num_frequencies
 
         self.latent_query = nn.Parameter(torch.empty(self.num_latents, self.latent_dim))
-        self.decoder_query = nn.Parameter(torch.empty(1, 1, self.latent_dim))
         nn.init.xavier_uniform_(self.latent_query)
-        nn.init.xavier_uniform_(self.decoder_query)
 
         self.sensor_projection = nn.Linear(
             self.input_channels + self.positional_dim,
@@ -108,13 +102,6 @@ class Senseiver(nn.Module):
 
         self.encoder_cross_attention = _LatentAttentionBlock(self.latent_dim, num_heads, dropout)
         self.encoder_recurrent_block = _LatentAttentionBlock(self.latent_dim, num_heads, dropout)
-
-        self.decoder_input_projection = nn.Linear(
-            self.positional_dim + self.latent_dim,
-            self.latent_dim,
-        )
-        self.decoder_cross_attention = _LatentAttentionBlock(self.latent_dim, num_heads, dropout)
-        self.output_projection = nn.Linear(self.latent_dim, self.output_channels)
 
     def _prepare_sensor_values(self, sensor_values: Tensor) -> Tensor:
         if sensor_values.dim() == 2:
@@ -167,8 +154,65 @@ class Senseiver(nn.Module):
         latent = self.encoder_recurrent_block(latent)
         return latent
 
+    def forward(self, sensor_values: Tensor, sensor_coordinates: Tensor) -> Tensor:
+        return self.encode(sensor_values, sensor_coordinates)
+
+
+class Senseiver(nn.Module):
+    """Senseiver-style sparse reconstruction model for a single frame."""
+
+    def __init__(
+        self,
+        input_channels: int = 1,
+        output_channels: int = 1,
+        spatial_dim: int = 2,
+        num_latents: int = 8,
+        latent_dim: int = 32,
+        num_frequencies: int = 8,
+        num_heads: int = 4,
+        encoder_hidden_dim: int | None = None,
+        dropout: float = 0.0,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__()
+        if "n_latents" in kwargs:
+            num_latents = int(kwargs["n_latents"])
+        if "n_heads" in kwargs:
+            num_heads = int(kwargs["n_heads"])
+        if "hidden_dim" in kwargs:
+            latent_dim = int(kwargs["hidden_dim"])
+
+        self.output_channels = int(output_channels)
+        self.encoder = SenseiverEncoder(
+            input_channels=input_channels,
+            spatial_dim=spatial_dim,
+            num_latents=num_latents,
+            latent_dim=latent_dim,
+            num_frequencies=num_frequencies,
+            num_heads=num_heads,
+            encoder_hidden_dim=encoder_hidden_dim,
+            dropout=dropout,
+        )
+        self.spatial_dim = self.encoder.spatial_dim
+        self.input_channels = self.encoder.input_channels
+        self.num_frequencies = self.encoder.num_frequencies
+        self.latent_dim = self.encoder.latent_dim
+        self.decoder_query = nn.Parameter(torch.empty(1, 1, self.latent_dim))
+        nn.init.xavier_uniform_(self.decoder_query)
+        self.decoder_input_projection = nn.Linear(
+            self.encoder.positional_dim + self.latent_dim,
+            self.latent_dim,
+        )
+        self.decoder_cross_attention = _LatentAttentionBlock(self.latent_dim, num_heads, dropout)
+        self.output_projection = nn.Linear(self.latent_dim, self.output_channels)
+
+    def encode(self, sensor_values: Tensor, sensor_coordinates: Tensor) -> Tensor:
+        return self.encoder.encode(sensor_values, sensor_coordinates)
+
     def decode(self, latent: Tensor, query_coordinates: Tensor) -> Tensor:
-        query_coordinates = self._prepare_coordinates(query_coordinates, self.spatial_dim, "query_coordinates")
+        query_coordinates = self.encoder._prepare_coordinates(
+            query_coordinates, self.spatial_dim, "query_coordinates"
+        )
         batch_size = latent.shape[0]
         if query_coordinates.shape[0] == 1 and batch_size > 1:
             query_coordinates = query_coordinates.expand(batch_size, -1, -1)
@@ -189,9 +233,13 @@ class Senseiver(nn.Module):
             sensor_values.dim() == 2 and sensor_coordinates.dim() == 2 and query_coordinates.dim() == 2
         )
 
-        sensor_values = self._prepare_sensor_values(sensor_values)
-        sensor_coordinates = self._prepare_coordinates(sensor_coordinates, self.spatial_dim, "sensor_coordinates")
-        query_coordinates = self._prepare_coordinates(query_coordinates, self.spatial_dim, "query_coordinates")
+        sensor_values = self.encoder._prepare_sensor_values(sensor_values)
+        sensor_coordinates = self.encoder._prepare_coordinates(
+            sensor_coordinates, self.spatial_dim, "sensor_coordinates"
+        )
+        query_coordinates = self.encoder._prepare_coordinates(
+            query_coordinates, self.spatial_dim, "query_coordinates"
+        )
 
         batch_size = sensor_values.shape[0]
         if sensor_values.shape[-1] != self.input_channels:
@@ -218,8 +266,66 @@ class Senseiver(nn.Module):
                 f"query_coordinates batch mismatch: expected {batch_size}, got {query_coordinates.shape[0]}."
             )
 
-        latent = self.encode(sensor_values, sensor_coordinates)
+        latent = self.encoder.encode(sensor_values, sensor_coordinates)
         output = self.decode(latent, query_coordinates)
         if single_example:
             return output[0]
         return output
+
+
+class SenseiverSDN(nn.Module):
+    """Project-specific ablation: Senseiver encoder followed by an SDN MLP.
+
+    Unlike :class:`Senseiver`, this model has no query-coordinate decoder. It
+    flattens the fixed-size latent representation and maps it directly to the
+    full reconstruction state.
+    """
+
+    def __init__(
+        self,
+        output_size: int,
+        input_channels: int = 1,
+        spatial_dim: int = 2,
+        num_latents: int = 8,
+        latent_dim: int = 32,
+        num_frequencies: int = 8,
+        num_heads: int = 4,
+        encoder_hidden_dim: int | None = None,
+        l1: int = 350,
+        l2: int = 400,
+        dropout: float = 0.0,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__()
+        if "n_latents" in kwargs:
+            num_latents = int(kwargs["n_latents"])
+        if "n_heads" in kwargs:
+            num_heads = int(kwargs["n_heads"])
+        if "hidden_dim" in kwargs:
+            latent_dim = int(kwargs["hidden_dim"])
+        self.encoder = SenseiverEncoder(
+            input_channels=input_channels,
+            spatial_dim=spatial_dim,
+            num_latents=num_latents,
+            latent_dim=latent_dim,
+            num_frequencies=num_frequencies,
+            num_heads=num_heads,
+            encoder_hidden_dim=encoder_hidden_dim,
+            dropout=dropout,
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(num_latents * latent_dim, l1),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(l1, l2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(l2, output_size),
+        )
+
+    def encode(self, sensor_values: Tensor, sensor_coordinates: Tensor) -> Tensor:
+        return self.encoder.encode(sensor_values, sensor_coordinates)
+
+    def forward(self, sensor_values: Tensor, sensor_coordinates: Tensor) -> Tensor:
+        latent = self.encode(sensor_values, sensor_coordinates)
+        return self.decoder(latent.flatten(start_dim=1))

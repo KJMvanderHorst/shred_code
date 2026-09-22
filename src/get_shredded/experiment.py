@@ -13,9 +13,10 @@ from sklearn.preprocessing import MinMaxScaler
 
 from .augmentation import make_batch_augmenter
 from .data import build_sensor_windows, load_cylinder_data, qr_place, qrpod_reconstruct
-from .model import SDN, SHRED, TimeSeriesDataset, fit
+from .model import SDN, SHRED, SenseiverSDN, TimeSeriesDataset, fit
 from .noise import apply_sensor_noise, resolve_sensor_modes
 from .senseiver import Senseiver
+from .robust_shred import RobustSHREDv1, RobustSHREDv2
 
 
 @dataclass
@@ -58,6 +59,22 @@ class RunResult:
     senseiver_err_per_snap: np.ndarray | None = None
     senseiver_val_history: np.ndarray | None = None
     senseiver_state_dict: dict[str, torch.Tensor] | None = None
+    senseiver_sdn_recon: np.ndarray | None = None
+    senseiver_sdn_err: float | None = None
+    senseiver_sdn_err_per_snap: np.ndarray | None = None
+    senseiver_sdn_val_history: np.ndarray | None = None
+    senseiver_sdn_state_dict: dict[str, torch.Tensor] | None = None
+    robust_shred_v1_recon: np.ndarray | None = None
+    robust_shred_v1_err: float | None = None
+    robust_shred_v1_err_per_snap: np.ndarray | None = None
+    robust_shred_v1_val_history: np.ndarray | None = None
+    robust_shred_v1_state_dict: dict[str, torch.Tensor] | None = None
+    robust_shred_v2_recon: np.ndarray | None = None
+    robust_shred_v2_err: float | None = None
+    robust_shred_v2_err_per_snap: np.ndarray | None = None
+    robust_shred_v2_val_history: np.ndarray | None = None
+    robust_shred_v2_state_dict: dict[str, torch.Tensor] | None = None
+    parameter_counts: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 SCENARIOS = ["gaussian", "dropout", "hybrid", "burst"]
@@ -99,6 +116,10 @@ def _aggregate_rel_error(pred: np.ndarray, truth: np.ndarray) -> float:
     return float(np.linalg.norm(pred - truth) / np.linalg.norm(truth))
 
 
+def _parameter_count(model: torch.nn.Module) -> int:
+    return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+
+
 class SenseiverSnapshotWrapper(torch.nn.Module):
     """Wrap Senseiver so it can be trained with the existing fit() helper."""
 
@@ -119,6 +140,19 @@ class SenseiverSnapshotWrapper(torch.nn.Module):
         query_coordinates = self.query_coordinates.expand(batch_size, -1, -1)
         out = self.model(sensor_values, sensor_coordinates, query_coordinates)
         return out.squeeze(-1)
+
+
+class SenseiverSDNSnapshotWrapper(torch.nn.Module):
+    """Adapt SenseiverSDN's coordinate-aware interface to ``fit``."""
+
+    def __init__(self, model: SenseiverSDN, sensor_coordinates: torch.Tensor) -> None:
+        super().__init__()
+        self.model = model
+        self.register_buffer("sensor_coordinates", sensor_coordinates)
+
+    def forward(self, sensor_values: torch.Tensor) -> torch.Tensor:
+        sensor_coordinates = self.sensor_coordinates.expand(sensor_values.shape[0], -1, -1)
+        return self.model(sensor_values, sensor_coordinates)
 
 
 def _sensor_coordinates_for_grid(sensor_locations: np.ndarray, nx: int, ny: int) -> np.ndarray:
@@ -226,6 +260,21 @@ def run_experiment(
     senseiver_num_frequencies: int = 8,
     senseiver_num_heads: int = 4,
     senseiver_dropout: float = 0.0,
+    senseiver_sdn_enabled: bool = True,
+    senseiver_sdn_l1: int | None = None,
+    senseiver_sdn_l2: int | None = None,
+    robust_shred_v1_enabled: bool = True,
+    robust_shred_v2_enabled: bool = True,
+    robust_shred_hidden_size: int = 64,
+    robust_shred_hidden_layers: int = 2,
+    robust_shred_num_heads: int = 4,
+    robust_shred_embed_dim: int = 32,
+    robust_shred_num_latents: int = 8,
+    robust_shred_latent_dim: int = 32,
+    robust_shred_num_frequencies: int = 8,
+    robust_shred_l1: int = 350,
+    robust_shred_l2: int = 400,
+    robust_shred_dropout: float = 0.0,
     verbose: bool = True,
 ) -> RunResult:
     np.random.seed(seed)
@@ -309,6 +358,15 @@ def run_experiment(
     senseiver_model = None
     senseiver_hist = None
     senseiver_recon = None
+    senseiver_sdn_model = None
+    senseiver_sdn_hist = None
+    senseiver_sdn_recon = None
+    robust_v1_model = None
+    robust_v2_model = None
+    robust_v1_hist = None
+    robust_v2_hist = None
+    robust_v1_recon = None
+    robust_v2_recon = None
     if senseiver_enabled:
         sensor_coords = torch.tensor(
             _sensor_coordinates_for_grid(np.asarray(sensor_locations), nx, ny),
@@ -348,16 +406,86 @@ def run_experiment(
             verbose=verbose,
             patience=patience,
         )
+        if senseiver_sdn_enabled:
+            senseiver_sdn = SenseiverSDN(
+                output_size=m,
+                input_channels=1,
+                spatial_dim=2,
+                num_latents=senseiver_num_latents,
+                latent_dim=senseiver_latent_dim,
+                num_frequencies=senseiver_num_frequencies,
+                num_heads=senseiver_num_heads,
+                l1=l1 if senseiver_sdn_l1 is None else senseiver_sdn_l1,
+                l2=l2 if senseiver_sdn_l2 is None else senseiver_sdn_l2,
+                dropout=senseiver_dropout,
+            ).to(device)
+            senseiver_sdn_model = SenseiverSDNSnapshotWrapper(senseiver_sdn, sensor_coords)
+            senseiver_sdn_hist = fit(
+                senseiver_sdn_model,
+                train_ds_senseiver,
+                valid_ds_senseiver,
+                batch_size=batch_size,
+                num_epochs=epochs,
+                lr=lr,
+                verbose=verbose,
+                patience=patience,
+            )
+    sensor_coords = torch.tensor(
+        _sensor_coordinates_for_grid(np.asarray(sensor_locations), nx, ny),
+        dtype=torch.float32,
+        device=device,
+    )
+    if robust_shred_v1_enabled:
+        robust_v1_model = RobustSHREDv1(
+            num_sensors, m, sensor_coords, hidden_size=robust_shred_hidden_size,
+            num_heads=robust_shred_num_heads, embed_dim=robust_shred_embed_dim,
+            num_frequencies=robust_shred_num_frequencies, l1=robust_shred_l1,
+            l2=robust_shred_l2, dropout=robust_shred_dropout,
+        ).to(device)
+        robust_v1_hist = fit(
+            robust_v1_model, train_ds, valid_ds, batch_size=batch_size,
+            num_epochs=epochs, lr=lr, verbose=verbose, patience=patience,
+        )
+    if robust_shred_v2_enabled:
+        robust_v2_model = RobustSHREDv2(
+            num_sensors, m, sensor_coords, num_latents=robust_shred_num_latents,
+            latent_dim=robust_shred_latent_dim, num_frequencies=robust_shred_num_frequencies,
+            num_heads=robust_shred_num_heads, hidden_size=robust_shred_hidden_size,
+            hidden_layers=robust_shred_hidden_layers, l1=robust_shred_l1,
+            l2=robust_shred_l2, dropout=robust_shred_dropout,
+        ).to(device)
+        robust_v2_hist = fit(
+            robust_v2_model, train_ds, valid_ds, batch_size=batch_size,
+            num_epochs=epochs, lr=lr, verbose=verbose, patience=patience,
+        )
 
     shred.eval(); sdn.eval()
     if senseiver_model is not None:
         senseiver_model.eval()
+    if senseiver_sdn_model is not None:
+        senseiver_sdn_model.eval()
+    if robust_v1_model is not None:
+        robust_v1_model.eval()
+    if robust_v2_model is not None:
+        robust_v2_model.eval()
     with torch.no_grad():
         shred_recon = sc.inverse_transform(shred(test_ds.X).detach().cpu().numpy())
         sdn_recon = sc.inverse_transform(sdn(test_ds_sdn.X).detach().cpu().numpy())
         if senseiver_model is not None:
             senseiver_recon = sc.inverse_transform(
                 senseiver_model(test_snapshot_sensor).detach().cpu().numpy()
+            )
+        if senseiver_sdn_model is not None:
+            senseiver_sdn_recon = sc.inverse_transform(
+                senseiver_sdn_model(test_snapshot_sensor).detach().cpu().numpy()
+            )
+        if robust_v1_model is not None:
+            robust_v1_recon = sc.inverse_transform(
+                robust_v1_model(test_ds.X).detach().cpu().numpy()
+            )
+        if robust_v2_model is not None:
+            robust_v2_recon = sc.inverse_transform(
+                robust_v2_model(test_ds.X).detach().cpu().numpy()
             )
     truth = sc.inverse_transform(test_ds.Y.detach().cpu().numpy())
 
@@ -379,6 +507,34 @@ def run_experiment(
     senseiver_val_history = None if senseiver_hist is None else (
         senseiver_hist.numpy() if hasattr(senseiver_hist, "numpy") else np.asarray(senseiver_hist)
     )
+    senseiver_sdn_err = None if senseiver_sdn_recon is None else _aggregate_rel_error(senseiver_sdn_recon, truth)
+    senseiver_sdn_err_per_snap = (
+        None if senseiver_sdn_recon is None else _per_snapshot_rel_error(senseiver_sdn_recon, truth)
+    )
+    senseiver_sdn_val_history = None if senseiver_sdn_hist is None else (
+        senseiver_sdn_hist.numpy() if hasattr(senseiver_sdn_hist, "numpy") else np.asarray(senseiver_sdn_hist)
+    )
+    parameter_counts: dict[str, dict[str, int]] = {
+        "SHRED": {"total": _parameter_count(shred)},
+        "SDN": {"total": _parameter_count(sdn)},
+    }
+    if robust_v1_model is not None:
+        parameter_counts["RobustSHREDv1"] = {"total": _parameter_count(robust_v1_model)}
+    if robust_v2_model is not None:
+        parameter_counts["RobustSHREDv2"] = {"total": _parameter_count(robust_v2_model)}
+    if senseiver_model is not None:
+        parameter_counts["Senseiver"] = {
+            "total": _parameter_count(senseiver_model),
+            "encoder": _parameter_count(senseiver_model.model.encoder),
+            "decoder": _parameter_count(senseiver_model.model)
+            - _parameter_count(senseiver_model.model.encoder),
+        }
+    if senseiver_sdn_model is not None:
+        parameter_counts["SenseiverSDN"] = {
+            "total": _parameter_count(senseiver_sdn_model),
+            "encoder": _parameter_count(senseiver_sdn_model.model.encoder),
+            "decoder": _parameter_count(senseiver_sdn_model.model.decoder),
+        }
 
     return RunResult(
         shred_recon=shred_recon,
@@ -406,6 +562,22 @@ def run_experiment(
         senseiver_err_per_snap=senseiver_err_per_snap,
         senseiver_val_history=senseiver_val_history,
         senseiver_state_dict=(None if senseiver_model is None else {k: v.detach().cpu() for k, v in senseiver_model.state_dict().items()}),
+        senseiver_sdn_recon=senseiver_sdn_recon,
+        senseiver_sdn_err=senseiver_sdn_err,
+        senseiver_sdn_err_per_snap=senseiver_sdn_err_per_snap,
+        senseiver_sdn_val_history=senseiver_sdn_val_history,
+        senseiver_sdn_state_dict=(None if senseiver_sdn_model is None else {k: v.detach().cpu() for k, v in senseiver_sdn_model.state_dict().items()}),
+        parameter_counts=parameter_counts,
+        robust_shred_v1_recon=robust_v1_recon,
+        robust_shred_v1_err=None if robust_v1_recon is None else _aggregate_rel_error(robust_v1_recon, truth),
+        robust_shred_v1_err_per_snap=None if robust_v1_recon is None else _per_snapshot_rel_error(robust_v1_recon, truth),
+        robust_shred_v1_val_history=None if robust_v1_hist is None else np.asarray(robust_v1_hist),
+        robust_shred_v1_state_dict=None if robust_v1_model is None else {k: v.detach().cpu() for k, v in robust_v1_model.state_dict().items()},
+        robust_shred_v2_recon=robust_v2_recon,
+        robust_shred_v2_err=None if robust_v2_recon is None else _aggregate_rel_error(robust_v2_recon, truth),
+        robust_shred_v2_err_per_snap=None if robust_v2_recon is None else _per_snapshot_rel_error(robust_v2_recon, truth),
+        robust_shred_v2_val_history=None if robust_v2_hist is None else np.asarray(robust_v2_hist),
+        robust_shred_v2_state_dict=None if robust_v2_model is None else {k: v.detach().cpu() for k, v in robust_v2_model.state_dict().items()},
     )
 
 
@@ -434,6 +606,18 @@ def run_robustness_comparison(
     gaussian_std: float = 0.03,
     test_noise_std: float = 0.03,
     dropout_fill: float = 0.0,
+    robust_shred_v1_enabled: bool = True,
+    robust_shred_v2_enabled: bool = True,
+    robust_shred_hidden_size: int = 64,
+    robust_shred_hidden_layers: int = 2,
+    robust_shred_num_heads: int = 4,
+    robust_shred_embed_dim: int = 32,
+    robust_shred_num_latents: int = 8,
+    robust_shred_latent_dim: int = 32,
+    robust_shred_num_frequencies: int = 8,
+    robust_shred_l1: int = 350,
+    robust_shred_l2: int = 400,
+    robust_shred_dropout: float = 0.0,
     verbose: bool = True,
 ) -> RobustnessResult:
     np.random.seed(seed)
@@ -499,6 +683,37 @@ def run_robustness_comparison(
     valid_ds_sdn = TimeSeriesDataset(valid_in[:, -1, :], valid_out)
 
     model_results: list[ModelResult] = []
+    sensor_coords = torch.tensor(
+        _sensor_coordinates_for_grid(np.asarray(sensor_locations), nx, ny),
+        dtype=torch.float32,
+        device=device,
+    )
+
+    def train_robust_model(model: torch.nn.Module, label: str, augment_fn) -> None:
+        history = fit(
+            model, train_ds, valid_ds, batch_size=batch_size, num_epochs=epochs,
+            lr=lr, verbose=verbose, patience=patience, augment_fn=augment_fn,
+        )
+        model.eval()
+        with torch.no_grad():
+            clean = sc.inverse_transform(model(test_in_clean).detach().cpu().numpy())
+            noisy = {
+                scenario: sc.inverse_transform(
+                    model(test_tensors_noisy[scenario]).detach().cpu().numpy()
+                )
+                for scenario in SCENARIOS
+            }
+        model_results.append(ModelResult(
+            name=label,
+            recon_clean=clean,
+            err_clean=_aggregate_rel_error(clean, truth),
+            err_per_snap_clean=_per_snapshot_rel_error(clean, truth),
+            recon_noisy=noisy,
+            err_noisy={s: _aggregate_rel_error(noisy[s], truth) for s in SCENARIOS},
+            err_per_snap_noisy={s: _per_snapshot_rel_error(noisy[s], truth) for s in SCENARIOS},
+            val_history=history.numpy() if hasattr(history, "numpy") else np.asarray(history),
+            state_dict={k: v.detach().cpu() for k, v in model.state_dict().items()},
+        ))
 
     for aug_type in _AUG_TYPES:
         label = _AUG_LABELS[aug_type]
@@ -530,6 +745,89 @@ def run_robustness_comparison(
             val_history=shred_hist.numpy() if hasattr(shred_hist, "numpy") else np.asarray(shred_hist),
             state_dict={k: v.detach().cpu() for k, v in shred.state_dict().items()},
         ))
+
+        # SenseiverSDN variant — instant snapshot encoder paired with SDN decoder.
+        # The underlying augmenter expects shape (batch, sensors); the model input
+        # stores sensors as (batch, sensors, 1), so we apply augmentation on the
+        # sensor axis and then restore the singleton channel dimension.
+        sdn_base_augmenter = make_batch_augmenter(
+            aug_type, num_sensors, gaussian_std=gaussian_std, dropout_fill=dropout_fill,
+        ) if aug_type != "none" else None
+        senseiver_sdn_augment_fn = (
+            None if sdn_base_augmenter is None else lambda x, _aug=sdn_base_augmenter: _aug(x[..., 0]).unsqueeze(-1)
+        )
+
+        train_snapshot_sensor = train_in[:, -1, :].unsqueeze(-1)
+        valid_snapshot_sensor = valid_in[:, -1, :].unsqueeze(-1)
+        senseiver_sdn = SenseiverSDN(
+            output_size=m,
+            input_channels=1,
+            spatial_dim=2,
+            num_latents=8,
+            latent_dim=32,
+            num_frequencies=8,
+            num_heads=4,
+            l1=l1,
+            l2=l2,
+            dropout=dropout,
+        ).to(device)
+        senseiver_sdn_wrapper = SenseiverSDNSnapshotWrapper(senseiver_sdn, sensor_coords)
+        senseiver_sdn_hist = fit(
+            senseiver_sdn_wrapper,
+            TimeSeriesDataset(train_snapshot_sensor, train_out),
+            TimeSeriesDataset(valid_snapshot_sensor, valid_out),
+            batch_size=batch_size,
+            num_epochs=epochs,
+            lr=lr,
+            verbose=verbose,
+            patience=patience,
+            augment_fn=senseiver_sdn_augment_fn,
+        )
+        senseiver_sdn_wrapper.eval()
+        test_clean_senseiver_sdn = test_in_clean[:, -1, :].unsqueeze(-1)
+        test_noisy_senseiver_sdn = {
+            s: test_tensors_noisy[s][:, -1, :].unsqueeze(-1) for s in SCENARIOS
+        }
+        with torch.no_grad():
+            senseiver_sdn_rc = sc.inverse_transform(
+                senseiver_sdn_wrapper(test_clean_senseiver_sdn).detach().cpu().numpy()
+            )
+            senseiver_sdn_rn = {
+                s: sc.inverse_transform(
+                    senseiver_sdn_wrapper(test_noisy_senseiver_sdn[s]).detach().cpu().numpy()
+                )
+                for s in SCENARIOS
+            }
+        model_results.append(ModelResult(
+            name=f"SenseiverSDN-{label}",
+            recon_clean=senseiver_sdn_rc,
+            err_clean=_aggregate_rel_error(senseiver_sdn_rc, truth),
+            err_per_snap_clean=_per_snapshot_rel_error(senseiver_sdn_rc, truth),
+            recon_noisy=senseiver_sdn_rn,
+            err_noisy={s: _aggregate_rel_error(senseiver_sdn_rn[s], truth) for s in SCENARIOS},
+            err_per_snap_noisy={s: _per_snapshot_rel_error(senseiver_sdn_rn[s], truth) for s in SCENARIOS},
+            val_history=senseiver_sdn_hist.numpy() if hasattr(senseiver_sdn_hist, "numpy") else np.asarray(senseiver_sdn_hist),
+            state_dict={k: v.detach().cpu() for k, v in senseiver_sdn.state_dict().items()},
+        ))
+
+        if robust_shred_v1_enabled:
+            robust_v1 = RobustSHREDv1(
+                num_sensors, m, sensor_coords, hidden_size=robust_shred_hidden_size,
+                num_heads=robust_shred_num_heads, embed_dim=robust_shred_embed_dim,
+                num_frequencies=robust_shred_num_frequencies, l1=robust_shred_l1,
+                l2=robust_shred_l2, dropout=robust_shred_dropout,
+            ).to(device)
+            train_robust_model(robust_v1, f"RobustSHREDv1-{label}", augment_fn)
+
+        if robust_shred_v2_enabled:
+            robust_v2 = RobustSHREDv2(
+                num_sensors, m, sensor_coords, num_latents=robust_shred_num_latents,
+                latent_dim=robust_shred_latent_dim, num_frequencies=robust_shred_num_frequencies,
+                num_heads=robust_shred_num_heads, hidden_size=robust_shred_hidden_size,
+                hidden_layers=robust_shred_hidden_layers, l1=robust_shred_l1,
+                l2=robust_shred_l2, dropout=robust_shred_dropout,
+            ).to(device)
+            train_robust_model(robust_v2, f"RobustSHREDv2-{label}", augment_fn)
 
         # SDN variant — uses only last timestep
         sdn_augment_fn = make_batch_augmenter(
