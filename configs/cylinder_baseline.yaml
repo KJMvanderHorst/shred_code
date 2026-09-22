@@ -20,11 +20,14 @@ model:
 
 senseiver:
   enabled: true
+  sdn_enabled: true
   num_latents: 8
   latent_dim: 32
   num_frequencies: 8
   num_heads: 4
   dropout: 0.0
+  sdn_l1: 350
+  sdn_l2: 400
 
 train:
   epochs: 1000

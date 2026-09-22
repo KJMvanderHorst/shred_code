@@ -47,6 +47,8 @@ def plot_reconstruction_panel(
     ]
     if getattr(result, "senseiver_recon", None) is not None:
         cols.append((f"Senseiver (err={result.senseiver_err:.3f})", result.senseiver_recon))
+    if getattr(result, "senseiver_sdn_recon", None) is not None:
+        cols.append((f"SenseiverSDN (err={result.senseiver_sdn_err:.3f})", result.senseiver_sdn_recon))
     cols.append((f"QR/POD (err={result.qrpod_err:.3f})", result.qrpod_recon))
     n_rows = len(snapshot_indices)
     n_cols = len(cols)
@@ -90,6 +92,8 @@ def animate_reconstructions(result: RunResult, save_path: Path, fps: int = 4) ->
     ]
     if getattr(result, "senseiver_recon", None) is not None:
         panels.append(("Senseiver", result.senseiver_recon, False))
+    if getattr(result, "senseiver_sdn_recon", None) is not None:
+        panels.append(("SenseiverSDN", result.senseiver_sdn_recon, False))
     panels.append(("QR/POD", result.qrpod_recon, False))
     vmax = _plot_limits(result.truth)
     norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
@@ -132,6 +136,8 @@ def plot_per_snapshot_error(result: RunResult, save_path: Path) -> None:
     ax.plot(x, result.sdn_err_per_snap, marker="s", label="SDN")
     if getattr(result, "senseiver_err_per_snap", None) is not None:
         ax.plot(x, result.senseiver_err_per_snap, marker="D", label="Senseiver")
+    if getattr(result, "senseiver_sdn_err_per_snap", None) is not None:
+        ax.plot(x, result.senseiver_sdn_err_per_snap, marker="P", label="SenseiverSDN")
     ax.plot(x, result.qrpod_err_per_snap, marker="^", label="QR/POD")
     ax.set_xlabel("Test snapshot index")
     ax.set_ylabel("Relative L2 error")
@@ -153,6 +159,9 @@ def plot_training_curves(result: RunResult, save_path: Path, val_every: int = 20
     if getattr(result, "senseiver_val_history", None) is not None:
         epochs_senseiver = np.arange(1, len(result.senseiver_val_history) + 1) * val_every
         ax.plot(epochs_senseiver, result.senseiver_val_history, marker="D", label="Senseiver")
+    if getattr(result, "senseiver_sdn_val_history", None) is not None:
+        epochs_senseiver_sdn = np.arange(1, len(result.senseiver_sdn_val_history) + 1) * val_every
+        ax.plot(epochs_senseiver_sdn, result.senseiver_sdn_val_history, marker="P", label="SenseiverSDN")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Validation relative L2 error")
     ax.set_yscale("log")

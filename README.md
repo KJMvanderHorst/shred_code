@@ -5,6 +5,8 @@ Reimplementation of **SHRED (SHallow REcurrent Decoder)** from Williams, Zahn, K
 The repo trains SHRED end-to-end to reconstruct the full vorticity field from a handful of point sensor measurements over a `lags`-long time window, and compares it against two baselines used in the paper:
 
 - **SDN** — static shallow decoder (same MLP, no recurrence; takes only the most recent sensor snapshot)
+- **Senseiver** — coordinate-aware latent encoder and coordinate-conditioned decoder
+- **SenseiverSDN** — project-specific ablation using the Senseiver encoder and an SDN-style MLP decoder
 - **QR/POD** — linear gappy-POD reconstruction with QR-pivoted sensor placement: `x̂ = U_r (C U_r)^{-1} y`
 
 ## Project layout
@@ -39,6 +41,18 @@ A separate `Senseiver` baseline is provided in `src/get_shredded/senseiver.py` a
 
 This baseline is kept separate from the SHRED/SDN codepaths and does not alter the current experimental behavior.
 
+`SenseiverSDN` is a project-specific comparison architecture, not a paper-defined
+model. It reuses the same coordinate-aware `SenseiverEncoder` and maps its fixed
+latent tensor `(batch, num_latents, latent_dim)` through the existing three-layer
+SDN-style MLP to `(batch, full_state_size)`. It does not use query coordinates or
+the standard Senseiver decoder. Both models receive instantaneous sensor values
+and sensor coordinates; SHRED additionally receives a temporal sensor history,
+while SDN receives only the latest sensor snapshot.
+
+The single-run result records trainable parameter counts for SHRED, SDN,
+Senseiver, and SenseiverSDN (including encoder/decoder counts for the two
+Senseiver variants), and the baseline script prints them alongside the errors.
+
 ## Setup
 
 Requires Python ≥ 3.10. Using [`uv`](https://github.com/astral-sh/uv):
@@ -55,7 +69,9 @@ Place `CYLINDER_ALL.mat` (the standard Brunton/Kutz cylinder-vortex dataset, con
 uv run python scripts/run_cylinder_baseline.py
 ```
 
-This trains SHRED and SDN with early stopping, computes the QR/POD baseline, prints relative L2 test errors for all three, and writes plots under `outputs/cylinder/`:
+This trains SHRED, SDN, Senseiver, and SenseiverSDN with early stopping, computes
+the QR/POD baseline, prints relative L2 test errors, and writes plots under
+`outputs/cylinder/`:
 
 - **`reconstructions/panel.png`** — 3 test snapshots × 4 columns (truth+sensor positions, SHRED, SDN, QR/POD). Sensor locations overlaid as lime dots on the truth column.
 - **`reconstructions/comparison.gif`** — animated side-by-side reconstruction across the entire test set.

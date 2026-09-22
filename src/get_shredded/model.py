@@ -8,7 +8,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
-from .senseiver import Senseiver, spatial_positional_encoding
+from .senseiver import Senseiver, SenseiverSDN, spatial_positional_encoding
 
 __all__ = [
     "SHRED",
@@ -17,6 +17,7 @@ __all__ = [
     "fit",
     "forecast",
     "Senseiver",
+    "SenseiverSDN",
     "spatial_positional_encoding",
 ]
 

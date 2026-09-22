@@ -56,6 +56,9 @@ def main(cfg: DictConfig) -> None:
         senseiver_num_frequencies=int(cfg.senseiver.num_frequencies),
         senseiver_num_heads=int(cfg.senseiver.num_heads),
         senseiver_dropout=float(cfg.senseiver.dropout),
+        senseiver_sdn_enabled=bool(cfg.senseiver.sdn_enabled),
+        senseiver_sdn_l1=int(cfg.senseiver.sdn_l1),
+        senseiver_sdn_l2=int(cfg.senseiver.sdn_l2),
         verbose=True,
     )
 
@@ -64,7 +67,12 @@ def main(cfg: DictConfig) -> None:
     print(f"SDN       relative L2 error: {result.sdn_err:.6f}")
     if result.senseiver_err is not None:
         print(f"Senseiver relative L2 error: {result.senseiver_err:.6f}")
+    if result.senseiver_sdn_err is not None:
+        print(f"SenseiverSDN relative L2 error: {result.senseiver_sdn_err:.6f}")
     print(f"QR/POD    relative L2 error: {result.qrpod_err:.6f}")
+    for model_name, counts in result.parameter_counts.items():
+        details = ", ".join(f"{name}={value}" for name, value in counts.items())
+        print(f"{model_name} parameters: {details}")
 
     outputs_root = Path(to_absolute_path(cfg.outputs.root))
     recon_dir = outputs_root / "reconstructions"
@@ -89,6 +97,7 @@ def main(cfg: DictConfig) -> None:
                 "shred_state_dict": result.shred_state_dict,
                 "sdn_state_dict": result.sdn_state_dict,
                 "senseiver_state_dict": result.senseiver_state_dict,
+                "senseiver_sdn_state_dict": result.senseiver_sdn_state_dict,
                 "shred_val_history": result.shred_val_history,
                 "sdn_val_history": result.sdn_val_history,
                 "senseiver_val_history": result.senseiver_val_history,
@@ -97,6 +106,7 @@ def main(cfg: DictConfig) -> None:
                     "shred_err": result.shred_err,
                     "sdn_err": result.sdn_err,
                     "senseiver_err": result.senseiver_err,
+                    "senseiver_sdn_err": result.senseiver_sdn_err,
                     "qrpod_err": result.qrpod_err,
                 },
             },

@@ -13,7 +13,7 @@ from sklearn.preprocessing import MinMaxScaler
 
 from .augmentation import make_batch_augmenter
 from .data import build_sensor_windows, load_cylinder_data, qr_place, qrpod_reconstruct
-from .model import SDN, SHRED, TimeSeriesDataset, fit
+from .model import SDN, SHRED, SenseiverSDN, TimeSeriesDataset, fit
 from .noise import apply_sensor_noise, resolve_sensor_modes
 from .senseiver import Senseiver
 
@@ -58,6 +58,12 @@ class RunResult:
     senseiver_err_per_snap: np.ndarray | None = None
     senseiver_val_history: np.ndarray | None = None
     senseiver_state_dict: dict[str, torch.Tensor] | None = None
+    senseiver_sdn_recon: np.ndarray | None = None
+    senseiver_sdn_err: float | None = None
+    senseiver_sdn_err_per_snap: np.ndarray | None = None
+    senseiver_sdn_val_history: np.ndarray | None = None
+    senseiver_sdn_state_dict: dict[str, torch.Tensor] | None = None
+    parameter_counts: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 SCENARIOS = ["gaussian", "dropout", "hybrid", "burst"]
@@ -99,6 +105,10 @@ def _aggregate_rel_error(pred: np.ndarray, truth: np.ndarray) -> float:
     return float(np.linalg.norm(pred - truth) / np.linalg.norm(truth))
 
 
+def _parameter_count(model: torch.nn.Module) -> int:
+    return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+
+
 class SenseiverSnapshotWrapper(torch.nn.Module):
     """Wrap Senseiver so it can be trained with the existing fit() helper."""
 
@@ -119,6 +129,19 @@ class SenseiverSnapshotWrapper(torch.nn.Module):
         query_coordinates = self.query_coordinates.expand(batch_size, -1, -1)
         out = self.model(sensor_values, sensor_coordinates, query_coordinates)
         return out.squeeze(-1)
+
+
+class SenseiverSDNSnapshotWrapper(torch.nn.Module):
+    """Adapt SenseiverSDN's coordinate-aware interface to ``fit``."""
+
+    def __init__(self, model: SenseiverSDN, sensor_coordinates: torch.Tensor) -> None:
+        super().__init__()
+        self.model = model
+        self.register_buffer("sensor_coordinates", sensor_coordinates)
+
+    def forward(self, sensor_values: torch.Tensor) -> torch.Tensor:
+        sensor_coordinates = self.sensor_coordinates.expand(sensor_values.shape[0], -1, -1)
+        return self.model(sensor_values, sensor_coordinates)
 
 
 def _sensor_coordinates_for_grid(sensor_locations: np.ndarray, nx: int, ny: int) -> np.ndarray:
@@ -226,6 +249,9 @@ def run_experiment(
     senseiver_num_frequencies: int = 8,
     senseiver_num_heads: int = 4,
     senseiver_dropout: float = 0.0,
+    senseiver_sdn_enabled: bool = True,
+    senseiver_sdn_l1: int | None = None,
+    senseiver_sdn_l2: int | None = None,
     verbose: bool = True,
 ) -> RunResult:
     np.random.seed(seed)
@@ -309,6 +335,9 @@ def run_experiment(
     senseiver_model = None
     senseiver_hist = None
     senseiver_recon = None
+    senseiver_sdn_model = None
+    senseiver_sdn_hist = None
+    senseiver_sdn_recon = None
     if senseiver_enabled:
         sensor_coords = torch.tensor(
             _sensor_coordinates_for_grid(np.asarray(sensor_locations), nx, ny),
@@ -348,16 +377,46 @@ def run_experiment(
             verbose=verbose,
             patience=patience,
         )
+        if senseiver_sdn_enabled:
+            senseiver_sdn = SenseiverSDN(
+                output_size=m,
+                input_channels=1,
+                spatial_dim=2,
+                num_latents=senseiver_num_latents,
+                latent_dim=senseiver_latent_dim,
+                num_frequencies=senseiver_num_frequencies,
+                num_heads=senseiver_num_heads,
+                l1=l1 if senseiver_sdn_l1 is None else senseiver_sdn_l1,
+                l2=l2 if senseiver_sdn_l2 is None else senseiver_sdn_l2,
+                dropout=senseiver_dropout,
+            ).to(device)
+            senseiver_sdn_model = SenseiverSDNSnapshotWrapper(senseiver_sdn, sensor_coords)
+            senseiver_sdn_hist = fit(
+                senseiver_sdn_model,
+                train_ds_senseiver,
+                valid_ds_senseiver,
+                batch_size=batch_size,
+                num_epochs=epochs,
+                lr=lr,
+                verbose=verbose,
+                patience=patience,
+            )
 
     shred.eval(); sdn.eval()
     if senseiver_model is not None:
         senseiver_model.eval()
+    if senseiver_sdn_model is not None:
+        senseiver_sdn_model.eval()
     with torch.no_grad():
         shred_recon = sc.inverse_transform(shred(test_ds.X).detach().cpu().numpy())
         sdn_recon = sc.inverse_transform(sdn(test_ds_sdn.X).detach().cpu().numpy())
         if senseiver_model is not None:
             senseiver_recon = sc.inverse_transform(
                 senseiver_model(test_snapshot_sensor).detach().cpu().numpy()
+            )
+        if senseiver_sdn_model is not None:
+            senseiver_sdn_recon = sc.inverse_transform(
+                senseiver_sdn_model(test_snapshot_sensor).detach().cpu().numpy()
             )
     truth = sc.inverse_transform(test_ds.Y.detach().cpu().numpy())
 
@@ -379,6 +438,30 @@ def run_experiment(
     senseiver_val_history = None if senseiver_hist is None else (
         senseiver_hist.numpy() if hasattr(senseiver_hist, "numpy") else np.asarray(senseiver_hist)
     )
+    senseiver_sdn_err = None if senseiver_sdn_recon is None else _aggregate_rel_error(senseiver_sdn_recon, truth)
+    senseiver_sdn_err_per_snap = (
+        None if senseiver_sdn_recon is None else _per_snapshot_rel_error(senseiver_sdn_recon, truth)
+    )
+    senseiver_sdn_val_history = None if senseiver_sdn_hist is None else (
+        senseiver_sdn_hist.numpy() if hasattr(senseiver_sdn_hist, "numpy") else np.asarray(senseiver_sdn_hist)
+    )
+    parameter_counts: dict[str, dict[str, int]] = {
+        "SHRED": {"total": _parameter_count(shred)},
+        "SDN": {"total": _parameter_count(sdn)},
+    }
+    if senseiver_model is not None:
+        parameter_counts["Senseiver"] = {
+            "total": _parameter_count(senseiver_model),
+            "encoder": _parameter_count(senseiver_model.model.encoder),
+            "decoder": _parameter_count(senseiver_model.model)
+            - _parameter_count(senseiver_model.model.encoder),
+        }
+    if senseiver_sdn_model is not None:
+        parameter_counts["SenseiverSDN"] = {
+            "total": _parameter_count(senseiver_sdn_model),
+            "encoder": _parameter_count(senseiver_sdn_model.model.encoder),
+            "decoder": _parameter_count(senseiver_sdn_model.model.decoder),
+        }
 
     return RunResult(
         shred_recon=shred_recon,
@@ -406,6 +489,12 @@ def run_experiment(
         senseiver_err_per_snap=senseiver_err_per_snap,
         senseiver_val_history=senseiver_val_history,
         senseiver_state_dict=(None if senseiver_model is None else {k: v.detach().cpu() for k, v in senseiver_model.state_dict().items()}),
+        senseiver_sdn_recon=senseiver_sdn_recon,
+        senseiver_sdn_err=senseiver_sdn_err,
+        senseiver_sdn_err_per_snap=senseiver_sdn_err_per_snap,
+        senseiver_sdn_val_history=senseiver_sdn_val_history,
+        senseiver_sdn_state_dict=(None if senseiver_sdn_model is None else {k: v.detach().cpu() for k, v in senseiver_sdn_model.state_dict().items()}),
+        parameter_counts=parameter_counts,
     )
 
 
