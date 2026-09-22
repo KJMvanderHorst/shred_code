@@ -746,6 +746,70 @@ def run_robustness_comparison(
             state_dict={k: v.detach().cpu() for k, v in shred.state_dict().items()},
         ))
 
+        # SenseiverSDN variant — instant snapshot encoder paired with SDN decoder.
+        # The underlying augmenter expects shape (batch, sensors); the model input
+        # stores sensors as (batch, sensors, 1), so we apply augmentation on the
+        # sensor axis and then restore the singleton channel dimension.
+        sdn_base_augmenter = make_batch_augmenter(
+            aug_type, num_sensors, gaussian_std=gaussian_std, dropout_fill=dropout_fill,
+        ) if aug_type != "none" else None
+        senseiver_sdn_augment_fn = (
+            None if sdn_base_augmenter is None else lambda x, _aug=sdn_base_augmenter: _aug(x[..., 0]).unsqueeze(-1)
+        )
+
+        train_snapshot_sensor = train_in[:, -1, :].unsqueeze(-1)
+        valid_snapshot_sensor = valid_in[:, -1, :].unsqueeze(-1)
+        senseiver_sdn = SenseiverSDN(
+            output_size=m,
+            input_channels=1,
+            spatial_dim=2,
+            num_latents=8,
+            latent_dim=32,
+            num_frequencies=8,
+            num_heads=4,
+            l1=l1,
+            l2=l2,
+            dropout=dropout,
+        ).to(device)
+        senseiver_sdn_wrapper = SenseiverSDNSnapshotWrapper(senseiver_sdn, sensor_coords)
+        senseiver_sdn_hist = fit(
+            senseiver_sdn_wrapper,
+            TimeSeriesDataset(train_snapshot_sensor, train_out),
+            TimeSeriesDataset(valid_snapshot_sensor, valid_out),
+            batch_size=batch_size,
+            num_epochs=epochs,
+            lr=lr,
+            verbose=verbose,
+            patience=patience,
+            augment_fn=senseiver_sdn_augment_fn,
+        )
+        senseiver_sdn_wrapper.eval()
+        test_clean_senseiver_sdn = test_in_clean[:, -1, :].unsqueeze(-1)
+        test_noisy_senseiver_sdn = {
+            s: test_tensors_noisy[s][:, -1, :].unsqueeze(-1) for s in SCENARIOS
+        }
+        with torch.no_grad():
+            senseiver_sdn_rc = sc.inverse_transform(
+                senseiver_sdn_wrapper(test_clean_senseiver_sdn).detach().cpu().numpy()
+            )
+            senseiver_sdn_rn = {
+                s: sc.inverse_transform(
+                    senseiver_sdn_wrapper(test_noisy_senseiver_sdn[s]).detach().cpu().numpy()
+                )
+                for s in SCENARIOS
+            }
+        model_results.append(ModelResult(
+            name=f"SenseiverSDN-{label}",
+            recon_clean=senseiver_sdn_rc,
+            err_clean=_aggregate_rel_error(senseiver_sdn_rc, truth),
+            err_per_snap_clean=_per_snapshot_rel_error(senseiver_sdn_rc, truth),
+            recon_noisy=senseiver_sdn_rn,
+            err_noisy={s: _aggregate_rel_error(senseiver_sdn_rn[s], truth) for s in SCENARIOS},
+            err_per_snap_noisy={s: _per_snapshot_rel_error(senseiver_sdn_rn[s], truth) for s in SCENARIOS},
+            val_history=senseiver_sdn_hist.numpy() if hasattr(senseiver_sdn_hist, "numpy") else np.asarray(senseiver_sdn_hist),
+            state_dict={k: v.detach().cpu() for k, v in senseiver_sdn.state_dict().items()},
+        ))
+
         if robust_shred_v1_enabled:
             robust_v1 = RobustSHREDv1(
                 num_sensors, m, sensor_coords, hidden_size=robust_shred_hidden_size,
