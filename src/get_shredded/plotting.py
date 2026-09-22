@@ -49,6 +49,10 @@ def plot_reconstruction_panel(
         cols.append((f"Senseiver (err={result.senseiver_err:.3f})", result.senseiver_recon))
     if getattr(result, "senseiver_sdn_recon", None) is not None:
         cols.append((f"SenseiverSDN (err={result.senseiver_sdn_err:.3f})", result.senseiver_sdn_recon))
+    if getattr(result, "robust_shred_v1_recon", None) is not None:
+        cols.append((f"RobustSHREDv1 (err={result.robust_shred_v1_err:.3f})", result.robust_shred_v1_recon))
+    if getattr(result, "robust_shred_v2_recon", None) is not None:
+        cols.append((f"RobustSHREDv2 (err={result.robust_shred_v2_err:.3f})", result.robust_shred_v2_recon))
     cols.append((f"QR/POD (err={result.qrpod_err:.3f})", result.qrpod_recon))
     n_rows = len(snapshot_indices)
     n_cols = len(cols)
@@ -94,6 +98,10 @@ def animate_reconstructions(result: RunResult, save_path: Path, fps: int = 4) ->
         panels.append(("Senseiver", result.senseiver_recon, False))
     if getattr(result, "senseiver_sdn_recon", None) is not None:
         panels.append(("SenseiverSDN", result.senseiver_sdn_recon, False))
+    if getattr(result, "robust_shred_v1_recon", None) is not None:
+        panels.append(("RobustSHREDv1", result.robust_shred_v1_recon, False))
+    if getattr(result, "robust_shred_v2_recon", None) is not None:
+        panels.append(("RobustSHREDv2", result.robust_shred_v2_recon, False))
     panels.append(("QR/POD", result.qrpod_recon, False))
     vmax = _plot_limits(result.truth)
     norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
@@ -138,6 +146,10 @@ def plot_per_snapshot_error(result: RunResult, save_path: Path) -> None:
         ax.plot(x, result.senseiver_err_per_snap, marker="D", label="Senseiver")
     if getattr(result, "senseiver_sdn_err_per_snap", None) is not None:
         ax.plot(x, result.senseiver_sdn_err_per_snap, marker="P", label="SenseiverSDN")
+    if getattr(result, "robust_shred_v1_err_per_snap", None) is not None:
+        ax.plot(x, result.robust_shred_v1_err_per_snap, marker="X", label="RobustSHREDv1")
+    if getattr(result, "robust_shred_v2_err_per_snap", None) is not None:
+        ax.plot(x, result.robust_shred_v2_err_per_snap, marker="h", label="RobustSHREDv2")
     ax.plot(x, result.qrpod_err_per_snap, marker="^", label="QR/POD")
     ax.set_xlabel("Test snapshot index")
     ax.set_ylabel("Relative L2 error")
@@ -162,6 +174,12 @@ def plot_training_curves(result: RunResult, save_path: Path, val_every: int = 20
     if getattr(result, "senseiver_sdn_val_history", None) is not None:
         epochs_senseiver_sdn = np.arange(1, len(result.senseiver_sdn_val_history) + 1) * val_every
         ax.plot(epochs_senseiver_sdn, result.senseiver_sdn_val_history, marker="P", label="SenseiverSDN")
+    if getattr(result, "robust_shred_v1_val_history", None) is not None:
+        epochs_v1 = np.arange(1, len(result.robust_shred_v1_val_history) + 1) * val_every
+        ax.plot(epochs_v1, result.robust_shred_v1_val_history, marker="X", label="RobustSHREDv1")
+    if getattr(result, "robust_shred_v2_val_history", None) is not None:
+        epochs_v2 = np.arange(1, len(result.robust_shred_v2_val_history) + 1) * val_every
+        ax.plot(epochs_v2, result.robust_shred_v2_val_history, marker="h", label="RobustSHREDv2")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Validation relative L2 error")
     ax.set_yscale("log")

@@ -59,6 +59,18 @@ def main(cfg: DictConfig) -> None:
         senseiver_sdn_enabled=bool(cfg.senseiver.sdn_enabled),
         senseiver_sdn_l1=int(cfg.senseiver.sdn_l1),
         senseiver_sdn_l2=int(cfg.senseiver.sdn_l2),
+        robust_shred_v1_enabled=bool(cfg.robust_shred.v1_enabled),
+        robust_shred_v2_enabled=bool(cfg.robust_shred.v2_enabled),
+        robust_shred_hidden_size=int(cfg.robust_shred.hidden_size),
+        robust_shred_hidden_layers=int(cfg.robust_shred.hidden_layers),
+        robust_shred_num_heads=int(cfg.robust_shred.num_heads),
+        robust_shred_embed_dim=int(cfg.robust_shred.embed_dim),
+        robust_shred_num_latents=int(cfg.robust_shred.num_latents),
+        robust_shred_latent_dim=int(cfg.robust_shred.latent_dim),
+        robust_shred_num_frequencies=int(cfg.robust_shred.num_frequencies),
+        robust_shred_l1=int(cfg.robust_shred.l1),
+        robust_shred_l2=int(cfg.robust_shred.l2),
+        robust_shred_dropout=float(cfg.robust_shred.dropout),
         verbose=True,
     )
 
@@ -69,6 +81,10 @@ def main(cfg: DictConfig) -> None:
         print(f"Senseiver relative L2 error: {result.senseiver_err:.6f}")
     if result.senseiver_sdn_err is not None:
         print(f"SenseiverSDN relative L2 error: {result.senseiver_sdn_err:.6f}")
+    if result.robust_shred_v1_err is not None:
+        print(f"RobustSHREDv1 relative L2 error: {result.robust_shred_v1_err:.6f}")
+    if result.robust_shred_v2_err is not None:
+        print(f"RobustSHREDv2 relative L2 error: {result.robust_shred_v2_err:.6f}")
     print(f"QR/POD    relative L2 error: {result.qrpod_err:.6f}")
     for model_name, counts in result.parameter_counts.items():
         details = ", ".join(f"{name}={value}" for name, value in counts.items())
@@ -98,6 +114,8 @@ def main(cfg: DictConfig) -> None:
                 "sdn_state_dict": result.sdn_state_dict,
                 "senseiver_state_dict": result.senseiver_state_dict,
                 "senseiver_sdn_state_dict": result.senseiver_sdn_state_dict,
+                "robust_shred_v1_state_dict": result.robust_shred_v1_state_dict,
+                "robust_shred_v2_state_dict": result.robust_shred_v2_state_dict,
                 "shred_val_history": result.shred_val_history,
                 "sdn_val_history": result.sdn_val_history,
                 "senseiver_val_history": result.senseiver_val_history,
@@ -107,6 +125,8 @@ def main(cfg: DictConfig) -> None:
                     "sdn_err": result.sdn_err,
                     "senseiver_err": result.senseiver_err,
                     "senseiver_sdn_err": result.senseiver_sdn_err,
+                    "robust_shred_v1_err": result.robust_shred_v1_err,
+                    "robust_shred_v2_err": result.robust_shred_v2_err,
                     "qrpod_err": result.qrpod_err,
                 },
             },
