@@ -15,6 +15,20 @@ model:
   l2: 400
   dropout: 0.0
 
+robust_shred:
+  v1_enabled: true
+  v2_enabled: true
+  hidden_size: 64
+  hidden_layers: 2
+  num_heads: 4
+  embed_dim: 32
+  num_latents: 8
+  latent_dim: 32
+  num_frequencies: 8
+  l1: 350
+  l2: 400
+  dropout: 0.0
+
 train:
   epochs: 1000
   batch_size: 64

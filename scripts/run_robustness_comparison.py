@@ -84,6 +84,18 @@ def _run_one(
         gaussian_std=float(cfg.augmentation.gaussian_std),
         test_noise_std=float(cfg.augmentation.test_noise_std),
         dropout_fill=float(cfg.augmentation.dropout_fill),
+        robust_shred_v1_enabled=bool(cfg.robust_shred.v1_enabled),
+        robust_shred_v2_enabled=bool(cfg.robust_shred.v2_enabled),
+        robust_shred_hidden_size=int(cfg.robust_shred.hidden_size),
+        robust_shred_hidden_layers=int(cfg.robust_shred.hidden_layers),
+        robust_shred_num_heads=int(cfg.robust_shred.num_heads),
+        robust_shred_embed_dim=int(cfg.robust_shred.embed_dim),
+        robust_shred_num_latents=int(cfg.robust_shred.num_latents),
+        robust_shred_latent_dim=int(cfg.robust_shred.latent_dim),
+        robust_shred_num_frequencies=int(cfg.robust_shred.num_frequencies),
+        robust_shred_l1=int(cfg.robust_shred.l1),
+        robust_shred_l2=int(cfg.robust_shred.l2),
+        robust_shred_dropout=float(cfg.robust_shred.dropout),
         verbose=True,
     )
 
@@ -120,7 +132,7 @@ def main(cfg: DictConfig) -> None:
 
     total = len(sensor_counts) * len(placements)
     print(f"\nRobustness sweep: {sensor_counts} sensors × {placements} placements "
-          f"= {total} runs, each training {len(SCENARIOS) * 2 + 1} models.\n")
+          f"= {total} runs, each training the configured model variants.\n")
 
     all_results: dict[tuple[int, str], RobustnessResult] = {}
 

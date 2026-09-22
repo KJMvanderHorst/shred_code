@@ -16,6 +16,7 @@ from .data import build_sensor_windows, load_cylinder_data, qr_place, qrpod_reco
 from .model import SDN, SHRED, SenseiverSDN, TimeSeriesDataset, fit
 from .noise import apply_sensor_noise, resolve_sensor_modes
 from .senseiver import Senseiver
+from .robust_shred import RobustSHREDv1, RobustSHREDv2
 
 
 @dataclass
@@ -523,6 +524,18 @@ def run_robustness_comparison(
     gaussian_std: float = 0.03,
     test_noise_std: float = 0.03,
     dropout_fill: float = 0.0,
+    robust_shred_v1_enabled: bool = True,
+    robust_shred_v2_enabled: bool = True,
+    robust_shred_hidden_size: int = 64,
+    robust_shred_hidden_layers: int = 2,
+    robust_shred_num_heads: int = 4,
+    robust_shred_embed_dim: int = 32,
+    robust_shred_num_latents: int = 8,
+    robust_shred_latent_dim: int = 32,
+    robust_shred_num_frequencies: int = 8,
+    robust_shred_l1: int = 350,
+    robust_shred_l2: int = 400,
+    robust_shred_dropout: float = 0.0,
     verbose: bool = True,
 ) -> RobustnessResult:
     np.random.seed(seed)
@@ -588,6 +601,37 @@ def run_robustness_comparison(
     valid_ds_sdn = TimeSeriesDataset(valid_in[:, -1, :], valid_out)
 
     model_results: list[ModelResult] = []
+    sensor_coords = torch.tensor(
+        _sensor_coordinates_for_grid(np.asarray(sensor_locations), nx, ny),
+        dtype=torch.float32,
+        device=device,
+    )
+
+    def train_robust_model(model: torch.nn.Module, label: str, augment_fn) -> None:
+        history = fit(
+            model, train_ds, valid_ds, batch_size=batch_size, num_epochs=epochs,
+            lr=lr, verbose=verbose, patience=patience, augment_fn=augment_fn,
+        )
+        model.eval()
+        with torch.no_grad():
+            clean = sc.inverse_transform(model(test_in_clean).detach().cpu().numpy())
+            noisy = {
+                scenario: sc.inverse_transform(
+                    model(test_tensors_noisy[scenario]).detach().cpu().numpy()
+                )
+                for scenario in SCENARIOS
+            }
+        model_results.append(ModelResult(
+            name=label,
+            recon_clean=clean,
+            err_clean=_aggregate_rel_error(clean, truth),
+            err_per_snap_clean=_per_snapshot_rel_error(clean, truth),
+            recon_noisy=noisy,
+            err_noisy={s: _aggregate_rel_error(noisy[s], truth) for s in SCENARIOS},
+            err_per_snap_noisy={s: _per_snapshot_rel_error(noisy[s], truth) for s in SCENARIOS},
+            val_history=history.numpy() if hasattr(history, "numpy") else np.asarray(history),
+            state_dict={k: v.detach().cpu() for k, v in model.state_dict().items()},
+        ))
 
     for aug_type in _AUG_TYPES:
         label = _AUG_LABELS[aug_type]
@@ -619,6 +663,25 @@ def run_robustness_comparison(
             val_history=shred_hist.numpy() if hasattr(shred_hist, "numpy") else np.asarray(shred_hist),
             state_dict={k: v.detach().cpu() for k, v in shred.state_dict().items()},
         ))
+
+        if robust_shred_v1_enabled:
+            robust_v1 = RobustSHREDv1(
+                num_sensors, m, sensor_coords, hidden_size=robust_shred_hidden_size,
+                num_heads=robust_shred_num_heads, embed_dim=robust_shred_embed_dim,
+                num_frequencies=robust_shred_num_frequencies, l1=robust_shred_l1,
+                l2=robust_shred_l2, dropout=robust_shred_dropout,
+            ).to(device)
+            train_robust_model(robust_v1, f"RobustSHREDv1-{label}", augment_fn)
+
+        if robust_shred_v2_enabled:
+            robust_v2 = RobustSHREDv2(
+                num_sensors, m, sensor_coords, num_latents=robust_shred_num_latents,
+                latent_dim=robust_shred_latent_dim, num_frequencies=robust_shred_num_frequencies,
+                num_heads=robust_shred_num_heads, hidden_size=robust_shred_hidden_size,
+                hidden_layers=robust_shred_hidden_layers, l1=robust_shred_l1,
+                l2=robust_shred_l2, dropout=robust_shred_dropout,
+            ).to(device)
+            train_robust_model(robust_v2, f"RobustSHREDv2-{label}", augment_fn)
 
         # SDN variant — uses only last timestep
         sdn_augment_fn = make_batch_augmenter(

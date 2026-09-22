@@ -9,6 +9,10 @@ The repo trains SHRED end-to-end to reconstruct the full vorticity field from a 
 - **SenseiverSDN** — project-specific ablation using the Senseiver encoder and an SDN-style MLP decoder
 - **QR/POD** — linear gappy-POD reconstruction with QR-pivoted sensor placement: `x̂ = U_r (C U_r)^{-1} y`
 
+SHRED now uses a GRU internally rather than an LSTM. This is a breaking change:
+previous SHRED checkpoints and committed robustness results were produced by the
+LSTM implementation and must be regenerated.
+
 ## Project layout
 
 ```
@@ -23,6 +27,7 @@ get-shredded/
     sweep_num_sensors.py               # sweep num_sensors, save aggregate plot
   src/get_shredded/
     model.py                           # SHRED, SDN, fit(), forecast()
+    robust_shred.py                    # RobustSHREDv1 / RobustSHREDv2
     data.py                            # cylinder loader, qr_place, sensor windowing
     baseline.py                        # QR/POD baseline wrapper
     experiment.py                      # reusable single-run pipeline → RunResult
@@ -53,6 +58,25 @@ The single-run result records trainable parameter counts for SHRED, SDN,
 Senseiver, and SenseiverSDN (including encoder/decoder counts for the two
 Senseiver variants), and the baseline script prints them alongside the errors.
 
+## Robust SHRED variants
+
+`RobustSHREDv1` and `RobustSHREDv2` combine temporal recurrence with
+coordinate-aware sensor attention. Both currently use the fixed `num_sensors`
+tensor convention; dropout is represented by corrupted or zero-filled readings,
+not by removing sensors from the attention set.
+
+- **RobustSHREDv1** — at each timestep, the attention query comes from the
+  previous recurrent hidden state, so memory actively selects which sensors to
+  trust. The recurrent cell is a GRU.
+- **RobustSHREDv2** — fixed learned Senseiver-style latent queries encode each
+  timestep independently of the past; only the resulting latent sequence is
+  passed to a GRU. The attention step has no previous-timestep memory.
+
+Both variants are trained and evaluated by `run_robustness_comparison.py` under
+clean, gaussian, dropout, hybrid, and burst conditions using the same protocol
+as SHRED and SDN. Disable either variant with
+`robust_shred.v2_enabled=false`.
+
 ## Setup
 
 Requires Python ≥ 3.10. Using [`uv`](https://github.com/astral-sh/uv):
@@ -78,13 +102,18 @@ the QR/POD baseline, prints relative L2 test errors, and writes plots under
 - **`curves/per_snapshot_error.png`** — relative L2 error per test snapshot, one line per method.
 - **`curves/training_curves.png`** — log-scale validation error vs epoch for SHRED and SDN.
 
+The previously committed checkpoints and files under
+`outputs/cylinder/robustness/` predate the GRU switch and the robust variants;
+regenerate them with `run_cylinder_baseline.py` and
+`run_robustness_comparison.py` before using their numbers.
+
 Hydra overrides work as usual:
 
 ```bash
 # more sensors, random placement
 uv run python scripts/run_cylinder_baseline.py model.num_sensors=10 model.placement=random
 
-# longer history window, smaller LSTM
+# longer history window, smaller GRU
 uv run python scripts/run_cylinder_baseline.py model.lags=20 model.hidden_size=32
 
 # different output directory
