@@ -9,6 +9,7 @@ data:
 
 model:
   lags: 10
+  recurrent_cell: gru
   hidden_size: 64
   hidden_layers: 2
   l1: 350

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import hydra
+import json
 import numpy as np
 import torch
 from hydra.utils import to_absolute_path
@@ -15,7 +16,12 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from get_shredded.experiment import run_experiment
+from get_shredded.experiment import (
+    _result_summary_payload,
+    _stable_config_fingerprint,
+    run_experiment,
+    write_result_summary,
+)
 from get_shredded.plotting import (
     animate_reconstructions,
     plot_per_snapshot_error,
@@ -26,6 +32,39 @@ from get_shredded.plotting import (
 
 @hydra.main(version_base=None, config_path="../configs", config_name="cylinder_baseline")
 def main(cfg: DictConfig) -> None:
+    execution_mode = str(cfg.execution.mode).lower()
+    verbose = execution_mode == "verbose"
+    outputs_root = Path(to_absolute_path(cfg.outputs.root))
+    config = {
+        "experiment": "cylinder_baseline",
+        "num_sensors": int(cfg.model.num_sensors),
+        "placement": str(cfg.model.placement),
+        "seed": int(cfg.seed),
+        "lags": int(cfg.model.lags),
+        "recurrent_cell": str(cfg.model.recurrent_cell).lower(),
+        "hidden_size": int(cfg.model.hidden_size),
+        "hidden_layers": int(cfg.model.hidden_layers),
+        "train_epochs": int(cfg.train.epochs),
+        "batch_size": int(cfg.train.batch_size),
+        "lr": float(cfg.train.lr),
+        "patience": int(cfg.train.patience),
+        "noise_enabled": bool(cfg.noise.enabled),
+        "noise_modes": [str(mode) for mode in cfg.noise.modes],
+    }
+    config_id = _stable_config_fingerprint(config)
+    summary_path = outputs_root / "result.json"
+    if summary_path.exists():
+        try:
+            existing = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+        if existing.get("config_id") == config_id and existing.get("status") == "completed":
+            if not verbose:
+                print(json.dumps({"status": "skipped", "config_id": config_id, "output_dir": str(outputs_root), "final_metrics": existing.get("final_metrics", {})}, separators=(",", ":"), sort_keys=True))
+            return
+        if existing.get("config_id") is not None and existing.get("config_id") != config_id:
+            raise ValueError(f"Existing result at {summary_path} does not match requested config {config_id}.")
+
     result = run_experiment(
         mat_path=Path(to_absolute_path(cfg.data.mat)),
         num_sensors=int(cfg.model.num_sensors),
@@ -71,26 +110,49 @@ def main(cfg: DictConfig) -> None:
         robust_shred_l1=int(cfg.robust_shred.l1),
         robust_shred_l2=int(cfg.robust_shred.l2),
         robust_shred_dropout=float(cfg.robust_shred.dropout),
-        verbose=True,
+        recurrent_cell=str(cfg.model.recurrent_cell).lower(),
+        verbose=verbose,
     )
 
-    print(f"\nNum sensors: {result.num_sensors} | Placement: {result.placement} | Lags: {result.lags}")
-    print(f"SHRED     relative L2 error: {result.shred_err:.6f}")
-    print(f"SDN       relative L2 error: {result.sdn_err:.6f}")
-    if result.senseiver_err is not None:
-        print(f"Senseiver relative L2 error: {result.senseiver_err:.6f}")
-    if result.senseiver_sdn_err is not None:
-        print(f"SenseiverSDN relative L2 error: {result.senseiver_sdn_err:.6f}")
-    if result.robust_shred_v1_err is not None:
-        print(f"RobustSHREDv1 relative L2 error: {result.robust_shred_v1_err:.6f}")
-    if result.robust_shred_v2_err is not None:
-        print(f"RobustSHREDv2 relative L2 error: {result.robust_shred_v2_err:.6f}")
-    print(f"QR/POD    relative L2 error: {result.qrpod_err:.6f}")
-    for model_name, counts in result.parameter_counts.items():
-        details = ", ".join(f"{name}={value}" for name, value in counts.items())
-        print(f"{model_name} parameters: {details}")
+    if verbose:
+        print(f"\nNum sensors: {result.num_sensors} | Placement: {result.placement} | Lags: {result.lags}")
+        print(f"SHRED     relative L2 error: {result.shred_err:.6f}")
+        print(f"SDN       relative L2 error: {result.sdn_err:.6f}")
+        if result.senseiver_err is not None:
+            print(f"Senseiver relative L2 error: {result.senseiver_err:.6f}")
+        if result.senseiver_sdn_err is not None:
+            print(f"SenseiverSDN relative L2 error: {result.senseiver_sdn_err:.6f}")
+        if result.robust_shred_v1_err is not None:
+            print(f"RobustSHREDv1 relative L2 error: {result.robust_shred_v1_err:.6f}")
+        if result.robust_shred_v2_err is not None:
+            print(f"RobustSHREDv2 relative L2 error: {result.robust_shred_v2_err:.6f}")
+        print(f"QR/POD    relative L2 error: {result.qrpod_err:.6f}")
+        for model_name, counts in result.parameter_counts.items():
+            details = ", ".join(f"{name}={value}" for name, value in counts.items())
+            print(f"{model_name} parameters: {details}")
 
-    outputs_root = Path(to_absolute_path(cfg.outputs.root))
+    summary = _result_summary_payload(
+        config=config,
+        result=result,
+        output_dir=outputs_root,
+        status="completed",
+        started_at=None,
+        finished_at=None,
+        duration_seconds=None,
+    )
+    write_result_summary(summary_path, summary)
+
+    if not verbose:
+        print(json.dumps({
+            "status": "completed",
+            "config_id": config_id,
+            "num_sensors": int(cfg.model.num_sensors),
+            "placement": str(cfg.model.placement),
+            "seed": int(cfg.seed),
+            "final_metrics": summary.get("final_metrics", {}),
+            "output_dir": str(outputs_root),
+        }, separators=(",", ":"), sort_keys=True))
+
     recon_dir = outputs_root / "reconstructions"
     curves_dir = outputs_root / "curves"
 
@@ -100,7 +162,8 @@ def main(cfg: DictConfig) -> None:
     animate_reconstructions(result, recon_dir / "comparison.gif", fps=int(cfg.outputs.gif_fps))
     plot_per_snapshot_error(result, curves_dir / "per_snapshot_error.png")
     plot_training_curves(result, curves_dir / "training_curves.png")
-    print(f"Saved plots under {outputs_root}/")
+    if verbose:
+        print(f"Saved plots under {outputs_root}/")
 
     if cfg.checkpoint.enabled:
         ckpt_dir = Path(to_absolute_path(cfg.checkpoint.dir))
@@ -132,7 +195,8 @@ def main(cfg: DictConfig) -> None:
             },
             ckpt,
         )
-        print(f"Saved metrics: {ckpt}")
+        if verbose:
+            print(f"Saved metrics: {ckpt}")
 
 
 if __name__ == "__main__":

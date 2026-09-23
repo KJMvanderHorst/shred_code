@@ -1,0 +1,40 @@
+{
+  "experiment": "recurrent_cell_benchmark",
+  "output_dir": "/Users/kaspervanderhorst/projects/shred/get-shredded.worktrees/agent-driven-experiment-optimization/outputs/cylinder/recurrent_cell",
+  "records": [
+    {
+      "cell": "gru",
+      "config_id": "11e7a02af419879e",
+      "final_metrics": {
+        "qrpod_err": 0.22747516632080078,
+        "robust_shred_v1_err": 0.9761616587638855,
+        "robust_shred_v2_err": 0.9645339846611023,
+        "sdn_err": 0.9339799880981445,
+        "senseiver_err": 0.5226114988327026,
+        "senseiver_sdn_err": 0.9642965793609619,
+        "shred_err": 0.9535225033760071
+      },
+      "output_dir": "/Users/kaspervanderhorst/projects/shred/get-shredded.worktrees/agent-driven-experiment-optimization/outputs/cylinder/recurrent_cell/gru",
+      "status": "completed"
+    },
+    {
+      "cell": "lstm",
+      "config_id": "2f6e1adb5351c922",
+      "final_metrics": {
+        "qrpod_err": 0.22747516632080078,
+        "robust_shred_v1_err": 0.9774532318115234,
+        "robust_shred_v2_err": 0.9691034555435181,
+        "sdn_err": 0.9325907230377197,
+        "senseiver_err": 0.5658687353134155,
+        "senseiver_sdn_err": 0.9626424908638,
+        "shred_err": 0.9582022428512573
+      },
+      "output_dir": "/Users/kaspervanderhorst/projects/shred/get-shredded.worktrees/agent-driven-experiment-optimization/outputs/cylinder/recurrent_cell/lstm",
+      "status": "completed"
+    }
+  ],
+  "requested_cells": [
+    "gru",
+    "lstm"
+  ]
+}

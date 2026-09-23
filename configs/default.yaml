@@ -6,3 +6,6 @@ hydra:
   run:
     dir: .
   output_subdir: null
+
+execution:
+  mode: quiet

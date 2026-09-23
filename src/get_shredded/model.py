@@ -36,11 +36,12 @@ class TimeSeriesDataset(Dataset):
 
 
 class SHRED(nn.Module):
-    """SHallow REcurrent Decoder: stacked GRU over a trajectory of sensor
-    measurements followed by a 3-layer fully-connected decoder that maps the
-    final hidden state to the full high-dimensional state.
+    """SHallow REcurrent Decoder: stacked recurrent cell over a trajectory of
+    sensor measurements followed by a 3-layer fully-connected decoder that maps
+    the final hidden state to the full high-dimensional state.
 
-    Mirrors the architecture from Williams, Zahn, Kutz (2024).
+    Mirrors the architecture from Williams, Zahn, Kutz (2024), with a configurable
+    recurrent cell type used by the experiment runner.
     """
 
     def __init__(
@@ -52,26 +53,44 @@ class SHRED(nn.Module):
         l1: int = 350,
         l2: int = 400,
         dropout: float = 0.0,
+        recurrent_cell: str = "gru",
     ) -> None:
         super().__init__()
-        self.rnn = nn.GRU(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=hidden_layers,
-            batch_first=True,
-        )
+        cell_type = str(recurrent_cell).lower()
+        if cell_type == "gru":
+            self.rnn = nn.GRU(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=hidden_layers,
+                batch_first=True,
+            )
+        elif cell_type == "lstm":
+            self.rnn = nn.LSTM(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=hidden_layers,
+                batch_first=True,
+            )
+        else:
+            raise ValueError(f"Unsupported recurrent_cell={recurrent_cell!r}; expected 'gru' or 'lstm'.")
         self.linear1 = nn.Linear(hidden_size, l1)
         self.linear2 = nn.Linear(l1, l2)
         self.linear3 = nn.Linear(l2, output_size)
         self.dropout = nn.Dropout(dropout)
         self.hidden_layers = hidden_layers
         self.hidden_size = hidden_size
+        self.recurrent_cell = cell_type
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         device = next(self.parameters()).device
         h_0 = torch.zeros(self.hidden_layers, x.size(0), self.hidden_size, device=device)
-        _, h_out = self.rnn(x, h_0)
-        h_out = h_out[-1].view(-1, self.hidden_size)
+        if self.recurrent_cell == "gru":
+            _, h_out = self.rnn(x, h_0)
+            h_out = h_out[-1].view(-1, self.hidden_size)
+        else:
+            c_0 = torch.zeros(self.hidden_layers, x.size(0), self.hidden_size, device=device)
+            _, (h_out, _) = self.rnn(x, (h_0, c_0))
+            h_out = h_out[-1].view(-1, self.hidden_size)
 
         out = torch.relu(self.dropout(self.linear1(h_out)))
         out = torch.relu(self.dropout(self.linear2(out)))

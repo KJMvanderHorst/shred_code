@@ -9,7 +9,9 @@ data:
   val_size: 20
 
 model:
+  num_sensors: 3
   lags: 10
+  placement: QR
   recurrent_cell: gru
   hidden_size: 64
   hidden_layers: 2
@@ -23,10 +25,11 @@ train:
   lr: 1.0e-3
   patience: 5
 
-sweep:
-  sensor_counts: [1, 2, 3, 5, 8, 12, 20]
-  placements: [QR, random]
-  seeds: [0, 1, 2]        # median over these seeds at each (sensor count, placement)
+comparison:
+  cells: [gru, lstm]
+  output_dir: outputs/cylinder/recurrent_cell
 
 outputs:
-  root: outputs/cylinder
+  root: outputs/cylinder/recurrent_cell
+
+seed: 42
