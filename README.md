@@ -113,8 +113,12 @@ Hydra overrides work as usual:
 # more sensors, random placement
 uv run python scripts/run_cylinder_baseline.py model.num_sensors=10 model.placement=random
 
-# longer history window, smaller GRU
+# longer history window, smaller recurrent cell
 uv run python scripts/run_cylinder_baseline.py model.lags=20 model.hidden_size=32
+
+# compare GRU vs LSTM for the same SHRED setup
+uv run python scripts/run_cylinder_baseline.py model.recurrent_cell=lstm
+uv run python scripts/run_recurrent_cell_benchmark.py
 
 # different output directory
 uv run python scripts/run_cylinder_baseline.py outputs.root=outputs/experiment_2
@@ -125,9 +129,10 @@ Key knobs in [configs/cylinder_baseline.yaml](configs/cylinder_baseline.yaml):
 | Setting | Default | Meaning |
 |---|---|---|
 | `model.num_sensors` | 3 | Number of point sensors |
-| `model.lags` | 10 | Length of sensor history window fed to the LSTM |
+| `model.lags` | 10 | Length of sensor history window fed to the recurrent cell |
 | `model.placement` | `QR` | `QR` (greedy QR-pivot) or `random` |
-| `model.hidden_size` / `hidden_layers` | 64 / 2 | LSTM hidden size and stack depth |
+| `model.recurrent_cell` | `gru` | `gru` or `lstm` for the SHRED recurrent core |
+| `model.hidden_size` / `hidden_layers` | 64 / 2 | Recurrent hidden size and stack depth |
 | `model.l1` / `l2` | 350 / 400 | Decoder MLP widths |
 | `data.test_size` | 10 | Last N windows held out for testing |
 | `data.val_size` | 20 | Validation windows preceding the test set |

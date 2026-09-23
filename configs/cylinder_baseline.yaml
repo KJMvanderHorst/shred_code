@@ -12,6 +12,7 @@ model:
   num_sensors: 3
   lags: 10                # cylinder data is short (~150 snapshots)
   placement: QR           # "QR" or "random"
+  recurrent_cell: gru     # "gru" or "lstm"
   hidden_size: 64
   hidden_layers: 2
   l1: 350

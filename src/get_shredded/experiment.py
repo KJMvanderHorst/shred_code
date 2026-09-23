@@ -4,8 +4,13 @@ Used by the main reconstruction script and by the num_sensors sweep.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -103,6 +108,106 @@ class RobustnessResult:
     placement: str
     num_sensors: int
     lags: int
+
+
+def _git_commit_short() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip() or None
+    except Exception:
+        return None
+
+
+def _stable_config_fingerprint(config: dict[str, Any]) -> str:
+    canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _result_summary_payload(
+    *,
+    config: dict[str, Any],
+    result: RunResult | RobustnessResult | None,
+    output_dir: str | Path,
+    status: str,
+    error_summary: str | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+    duration_seconds: float | None = None,
+) -> dict[str, Any]:
+    config_for_id = {k: v for k, v in config.items() if k != "config_id"}
+    payload: dict[str, Any] = {
+        "experiment": config.get("experiment", "cylinder"),
+        "status": status,
+        "config_id": _stable_config_fingerprint(config_for_id),
+        "sensor_count": int(config.get("num_sensors", config.get("sensor_count", 0))),
+        "placement": config.get("placement", "unknown"),
+        "seed": config.get("seed"),
+        "lags": config.get("lags"),
+        "output_dir": str(output_dir),
+        "git_commit": _git_commit_short(),
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "duration_seconds": duration_seconds,
+    }
+    if error_summary is not None:
+        payload["error_summary"] = error_summary
+    if result is not None:
+        if isinstance(result, RobustnessResult):
+            payload["final_metrics"] = {
+                model.name: {
+                    "clean": float(model.err_clean),
+                    **{scenario: float(model.err_noisy[scenario]) for scenario in SCENARIOS},
+                }
+                for model in result.models
+            }
+        else:
+            payload["epochs_used"] = int(len(getattr(result, "shred_val_history", []) or []))
+            payload["final_metrics"] = {
+                "shred_err": float(getattr(result, "shred_err", np.nan)),
+                "sdn_err": float(getattr(result, "sdn_err", np.nan)),
+                "qrpod_err": float(getattr(result, "qrpod_err", np.nan)),
+            }
+            if getattr(result, "senseiver_err", None) is not None:
+                payload["final_metrics"]["senseiver_err"] = float(result.senseiver_err)
+            if getattr(result, "senseiver_sdn_err", None) is not None:
+                payload["final_metrics"]["senseiver_sdn_err"] = float(result.senseiver_sdn_err)
+            if getattr(result, "robust_shred_v1_err", None) is not None:
+                payload["final_metrics"]["robust_shred_v1_err"] = float(result.robust_shred_v1_err)
+            if getattr(result, "robust_shred_v2_err", None) is not None:
+                payload["final_metrics"]["robust_shred_v2_err"] = float(result.robust_shred_v2_err)
+    return payload
+
+
+def write_result_summary(path: Path, summary: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def load_result_summary(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def require_matching_result_summary(summary_path: Path, expected_config_id: str) -> dict[str, Any] | None:
+    summary = load_result_summary(summary_path)
+    if summary is None:
+        return None
+    if summary.get("status") != "completed":
+        return None
+    actual_id = summary.get("config_id")
+    if actual_id is not None and actual_id != expected_config_id:
+        raise ValueError(
+            f"Found completed result at {summary_path} with config_id={actual_id}, "
+            f"but requested config_id={expected_config_id}. Refusing to reuse mismatched output."
+        )
+    return summary
 
 
 def _per_snapshot_rel_error(pred: np.ndarray, truth: np.ndarray) -> np.ndarray:
@@ -275,6 +380,7 @@ def run_experiment(
     robust_shred_l1: int = 350,
     robust_shred_l2: int = 400,
     robust_shred_dropout: float = 0.0,
+    recurrent_cell: str = "gru",
     verbose: bool = True,
 ) -> RunResult:
     np.random.seed(seed)
@@ -347,7 +453,7 @@ def run_experiment(
     test_ds_sdn = TimeSeriesDataset(test_in[:, -1, :], test_out)
 
     shred = SHRED(num_sensors, m, hidden_size=hidden_size, hidden_layers=hidden_layers,
-                  l1=l1, l2=l2, dropout=dropout).to(device)
+                  l1=l1, l2=l2, dropout=dropout, recurrent_cell=recurrent_cell).to(device)
     shred_hist = fit(shred, train_ds, valid_ds, batch_size=batch_size,
                      num_epochs=epochs, lr=lr, verbose=verbose, patience=patience)
 
