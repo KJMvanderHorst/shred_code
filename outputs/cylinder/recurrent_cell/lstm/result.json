@@ -1,0 +1,24 @@
+{
+  "config_id": "2f6e1adb5351c922",
+  "duration_seconds": null,
+  "epochs_used": 1,
+  "experiment": "recurrent_cell_benchmark",
+  "final_metrics": {
+    "qrpod_err": 0.22747516632080078,
+    "robust_shred_v1_err": 0.9774532318115234,
+    "robust_shred_v2_err": 0.9691034555435181,
+    "sdn_err": 0.9325907230377197,
+    "senseiver_err": 0.5658687353134155,
+    "senseiver_sdn_err": 0.9626424908638,
+    "shred_err": 0.9582022428512573
+  },
+  "finished_at": null,
+  "git_commit": "007e073",
+  "lags": 10,
+  "output_dir": "/Users/kaspervanderhorst/projects/shred/get-shredded.worktrees/agent-driven-experiment-optimization/outputs/cylinder/recurrent_cell/lstm",
+  "placement": "QR",
+  "seed": 42,
+  "sensor_count": 3,
+  "started_at": null,
+  "status": "completed"
+}
