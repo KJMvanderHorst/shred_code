@@ -80,6 +80,7 @@ def _run_one(
         "placement": str(placement),
         "seed": int(cfg.seed),
         "lags": int(cfg.model.lags),
+        "recurrent_cell": str(cfg.model.recurrent_cell).lower(),
         "hidden_size": int(cfg.model.hidden_size),
         "hidden_layers": int(cfg.model.hidden_layers),
         "train_epochs": int(cfg.train.epochs),
@@ -128,6 +129,7 @@ def _run_one(
             robust_shred_l1=int(cfg.robust_shred.l1),
             robust_shred_l2=int(cfg.robust_shred.l2),
             robust_shred_dropout=float(cfg.robust_shred.dropout),
+            recurrent_cell=str(cfg.model.recurrent_cell).lower(),
             verbose=verbose,
         )
 

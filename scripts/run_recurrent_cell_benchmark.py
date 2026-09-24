@@ -26,6 +26,7 @@ def main(cfg: DictConfig) -> None:
     output_dir = Path(to_absolute_path(cfg.comparison.output_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
     cells = [str(cell).lower() for cell in cfg.comparison.cells]
+    verbose = str(cfg.execution.mode).lower() == "verbose"
 
     records: list[dict[str, object]] = []
     for cell in cells:
@@ -44,6 +45,7 @@ def main(cfg: DictConfig) -> None:
             "batch_size": int(cfg.train.batch_size),
             "lr": float(cfg.train.lr),
             "patience": int(cfg.train.patience),
+            "shred_only": bool(cfg.comparison.shred_only),
         }
         config_id = _stable_config_fingerprint(config)
         summary_path = cell_dir / "result.json"
@@ -79,7 +81,8 @@ def main(cfg: DictConfig) -> None:
             patience=int(cfg.train.patience),
             seed=int(cfg.seed),
             recurrent_cell=cell,
-            verbose=False,
+            shred_only=bool(cfg.comparison.shred_only),
+            verbose=verbose,
         )
         summary = _result_summary_payload(
             config=config,

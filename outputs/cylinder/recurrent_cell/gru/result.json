@@ -1,15 +1,15 @@
 {
-  "config_id": "7149cb9fdc27aa94",
+  "config_id": "11a889189c594c06",
   "duration_seconds": null,
-  "epochs_used": 42,
+  "epochs_used": 31,
   "experiment": "recurrent_cell_benchmark",
   "final_metrics": {
-    "shred_err": 0.005652094259858131
+    "shred_err": 0.006958266720175743
   },
   "finished_at": null,
   "git_commit": "fdc96d5",
   "lags": 10,
-  "output_dir": "/Users/kaspervanderhorst/projects/shred/get-shredded/outputs/cylinder/recurrent_cell/lstm",
+  "output_dir": "/Users/kaspervanderhorst/projects/shred/get-shredded/outputs/cylinder/recurrent_cell/gru",
   "placement": "QR",
   "seed": 42,
   "sensor_count": 3,

@@ -27,6 +27,7 @@ train:
 
 comparison:
   cells: [gru, lstm]
+  shred_only: true
   output_dir: outputs/cylinder/recurrent_cell
 
 outputs:

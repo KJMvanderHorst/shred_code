@@ -1,0 +1,23 @@
+{
+  "config_id": "61d7cb755df387ae",
+  "duration_seconds": null,
+  "epochs_used": 31,
+  "experiment": "cylinder_baseline",
+  "final_metrics": {
+    "qrpod_err": 0.22747516632080078,
+    "robust_shred_v1_err": 0.010923733934760094,
+    "robust_shred_v2_err": 0.008737543597817421,
+    "sdn_err": 0.007283154409378767,
+    "senseiver_sdn_err": 0.010370700620114803,
+    "shred_err": 0.006958266720175743
+  },
+  "finished_at": null,
+  "git_commit": "fdc96d5",
+  "lags": 10,
+  "output_dir": "/Users/kaspervanderhorst/projects/shred/get-shredded/outputs/cylinder",
+  "placement": "QR",
+  "seed": 42,
+  "sensor_count": 3,
+  "started_at": null,
+  "status": "completed"
+}
