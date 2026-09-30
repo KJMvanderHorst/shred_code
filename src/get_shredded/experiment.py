@@ -17,7 +17,7 @@ import torch
 from sklearn.preprocessing import MinMaxScaler
 
 from .augmentation import make_batch_augmenter
-from .data import build_sensor_windows, load_cylinder_data, qr_place, qrpod_reconstruct
+from .data import build_sensor_windows, load_dataset, qr_place, qrpod_reconstruct
 from .model import SDN, SHRED, SenseiverSDN, TimeSeriesDataset, fit
 from .noise import apply_sensor_noise, resolve_sensor_modes
 from .senseiver import Senseiver
@@ -341,6 +341,9 @@ def _build_scenario_noisy(
 def run_experiment(
     mat_path: str | Path,
     *,
+    data_source: str = "cylinder",
+    data_path: str | Path | None = None,
+    trajectory_index: int = 0,
     num_sensors: int,
     lags: int,
     placement: str,
@@ -391,7 +394,8 @@ def run_experiment(
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    load_X, nx, ny = load_cylinder_data(mat_path)  # (N, m)
+    effective_path = Path(data_path) if data_path is not None else Path(mat_path)
+    load_X, nx, ny = load_dataset(data_source, effective_path, trajectory_index=trajectory_index)
     n, m = load_X.shape
 
     # Sequential split over (n - lags) sliding windows.
@@ -740,6 +744,9 @@ _AUG_LABELS = {"none": "clean", "gaussian": "gaussian", "dropout": "dropout", "h
 def run_robustness_comparison(
     mat_path: str | Path,
     *,
+    data_source: str = "cylinder",
+    data_path: str | Path | None = None,
+    trajectory_index: int = 0,
     num_sensors: int,
     lags: int,
     placement: str,
@@ -776,7 +783,8 @@ def run_robustness_comparison(
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    load_X, nx, ny = load_cylinder_data(mat_path)
+    effective_path = Path(data_path) if data_path is not None else Path(mat_path)
+    load_X, nx, ny = load_dataset(data_source, effective_path, trajectory_index=trajectory_index)
     n, m = load_X.shape
 
     n_windows = n - lags

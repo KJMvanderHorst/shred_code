@@ -4,18 +4,18 @@ defaults:
   - _self_
 
 data:
-  source: cylinder        # choose dataset source: "cylinder" or "wave"
+  source: wave
   mat: data/CYLINDER_ALL.mat
   wave_file: data/wave_1d.npz
   trajectory_index: 0
-  test_size: 10           # last `test_size` windows held out (sequential split)
-  val_size: 20            # last `val_size` windows of the remainder used for validation
+  test_size: 10
+  val_size: 20
 
 model:
   num_sensors: 3
-  lags: 10                # cylinder data is short (~150 snapshots)
-  placement: QR           # "QR" or "random"
-  recurrent_cell: gru     # "gru" or "lstm"
+  lags: 10
+  placement: QR
+  recurrent_cell: gru
   hidden_size: 64
   hidden_layers: 2
   l1: 350
@@ -56,10 +56,10 @@ train:
 checkpoint:
   enabled: true
   dir: models
-  name: shred_baseline.pt
+  name: wave_baseline.pt
 
 outputs:
-  root: outputs/cylinder
+  root: outputs/wave
   gif_fps: 4
 
 seed: 42

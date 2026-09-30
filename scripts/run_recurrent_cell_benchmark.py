@@ -25,6 +25,8 @@ from get_shredded.experiment import (
 def main(cfg: DictConfig) -> None:
     output_dir = Path(to_absolute_path(cfg.comparison.output_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
+    data_source = str(cfg.data.source).lower()
+    dataset_path = Path(to_absolute_path(cfg.data.wave_file if data_source == "wave" else cfg.data.mat))
     cells = [str(cell).lower() for cell in cfg.comparison.cells]
     verbose = str(cfg.execution.mode).lower() == "verbose"
 
@@ -64,7 +66,10 @@ def main(cfg: DictConfig) -> None:
                 })
                 continue
         result = run_experiment(
-            mat_path=Path(to_absolute_path(cfg.data.mat)),
+            mat_path=dataset_path,
+            data_source=data_source,
+            data_path=dataset_path,
+            trajectory_index=int(cfg.data.get("trajectory_index", 0)),
             num_sensors=int(cfg.model.num_sensors),
             lags=int(cfg.model.lags),
             placement=str(cfg.model.placement),

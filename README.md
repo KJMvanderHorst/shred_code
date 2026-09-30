@@ -87,6 +87,30 @@ uv sync
 
 Place `CYLINDER_ALL.mat` (the standard Brunton/Kutz cylinder-vortex dataset, contains a `VORTALL` array of shape `(m, T)`) at `data/CYLINDER_ALL.mat`.
 
+## Synthetic wave-data prototype
+
+A raw analytical 1D wave-equation prototype is available for experiments that should stay upstream of sensor placement and training-set construction.
+
+```bash
+uv run python prototyping_tests/generate_wave_data.py
+```
+
+This saves a sensor-free dataset at `data/wave_1d.npz` with arrays `field`, `x`, and `t`, plus metadata such as `L`, `c`, `num_modes`, and `seed`.
+
+The training and evaluation scripts remain neutral: they accept whichever raw dataset you point them at. For the canonical cylinder workflow use the default config. For the synthetic wave variant, override the data source and file at runtime:
+
+```bash
+uv run python scripts/run_cylinder_baseline.py --config-name wave_baseline
+```
+
+or equivalently:
+
+```bash
+uv run python scripts/run_cylinder_baseline.py data.source=wave data.wave_file=data/wave_1d.npz data.trajectory_index=0
+```
+
+The same pattern works for the other sweeps and robustness scripts. The pipeline expects a raw full-state array of shape `(N_time, N_state)` and performs sensor selection, lag construction, and train/validation/test splitting only after the raw dataset has been loaded.
+
 ## Single run: train + evaluate + plot
 
 ```bash

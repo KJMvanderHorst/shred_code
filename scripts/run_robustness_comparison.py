@@ -74,8 +74,11 @@ def _run_one(
     verbose: bool,
 ) -> RobustnessResult | None:
     """Train all model variants for one (num_sensors, placement) combination."""
+    data_source = str(cfg.data.source).lower()
+    dataset_path = Path(to_absolute_path(cfg.data.wave_file if data_source == "wave" else cfg.data.mat))
     config = {
         "experiment": "robustness_sweep",
+        "data_source": data_source,
         "num_sensors": int(num_sensors),
         "placement": str(placement),
         "seed": int(cfg.seed),
@@ -98,7 +101,10 @@ def _run_one(
 
     try:
         result = run_robustness_comparison(
-            mat_path=Path(to_absolute_path(cfg.data.mat)),
+            mat_path=dataset_path,
+            data_source=data_source,
+            data_path=dataset_path,
+            trajectory_index=int(cfg.data.get("trajectory_index", 0)),
             num_sensors=num_sensors,
             lags=int(cfg.model.lags),
             placement=placement,

@@ -35,8 +35,12 @@ def main(cfg: DictConfig) -> None:
     execution_mode = str(cfg.execution.mode).lower()
     verbose = execution_mode == "verbose"
     outputs_root = Path(to_absolute_path(cfg.outputs.root))
+    data_source = str(cfg.data.source).lower()
+    dataset_path = Path(to_absolute_path(cfg.data.wave_file if data_source == "wave" else cfg.data.mat))
     config = {
         "experiment": "cylinder_baseline",
+        "data_source": data_source,
+        "data_path": str(dataset_path),
         "num_sensors": int(cfg.model.num_sensors),
         "placement": str(cfg.model.placement),
         "seed": int(cfg.seed),
@@ -66,7 +70,10 @@ def main(cfg: DictConfig) -> None:
             raise ValueError(f"Existing result at {summary_path} does not match requested config {config_id}.")
 
     result = run_experiment(
-        mat_path=Path(to_absolute_path(cfg.data.mat)),
+        mat_path=dataset_path,
+        data_source=data_source,
+        data_path=dataset_path,
+        trajectory_index=int(cfg.data.get("trajectory_index", 0)),
         num_sensors=int(cfg.model.num_sensors),
         lags=int(cfg.model.lags),
         placement=str(cfg.model.placement),
