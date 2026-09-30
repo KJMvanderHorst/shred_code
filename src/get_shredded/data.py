@@ -6,6 +6,8 @@ import numpy as np
 import scipy.linalg
 from scipy.io import loadmat
 
+from .wave_data import load_wave_data
+
 
 def load_cylinder_data(mat_path: str | Path) -> tuple[np.ndarray, int, int]:
     """Returns (load_X, nx, ny) where load_X has shape (N, m): N temporal
@@ -18,6 +20,29 @@ def load_cylinder_data(mat_path: str | Path) -> tuple[np.ndarray, int, int]:
     nx = int(data.get("nx", [[0]])[0][0])
     ny = int(data.get("ny", [[0]])[0][0])
     return load_X, nx, ny
+
+
+def load_dataset(
+    data_source: str,
+    data_path: str | Path,
+    *,
+    trajectory_index: int = 0,
+) -> tuple[np.ndarray, int, int]:
+    """Load a raw dataset and return a training-ready (N_time, N_state) matrix.
+
+    Supported sources are the cylinder-vortex `.mat` dataset and the synthetic
+    1D wave `.npz` prototype. The downstream model code stays neutral to the
+    dataset origin as long as the raw state matrix follows the repo contract.
+    """
+    source = str(data_source).lower()
+    if source in {"cylinder", "cylinder_data", "mat", "cylinder_mat"}:
+        return load_cylinder_data(data_path)
+    if source in {"wave", "wave_1d", "synthetic_wave", "synthetic"}:
+        return load_wave_data(data_path, trajectory_index=trajectory_index)
+    raise ValueError(
+        f"Unsupported data_source='{data_source}'. Expected one of: "
+        "cylinder, wave."
+    )
 
 
 def qr_place(data_matrix: np.ndarray, num_sensors: int) -> tuple[np.ndarray, np.ndarray]:

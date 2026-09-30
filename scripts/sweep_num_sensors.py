@@ -37,6 +37,8 @@ def main(cfg: DictConfig) -> None:
     sensor_counts = list(cfg.sweep.sensor_counts)
     seeds = list(cfg.sweep.seeds)
     placements = list(cfg.sweep.placements)
+    data_source = str(cfg.data.source).lower()
+    dataset_path = Path(to_absolute_path(cfg.data.wave_file if data_source == "wave" else cfg.data.mat))
     out_dir = Path(to_absolute_path(cfg.outputs.root)) / "sweep"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -85,7 +87,10 @@ def main(cfg: DictConfig) -> None:
 
                 try:
                     r = run_experiment(
-                        mat_path=Path(to_absolute_path(cfg.data.mat)),
+                        mat_path=dataset_path,
+                        data_source=data_source,
+                        data_path=dataset_path,
+                        trajectory_index=int(cfg.data.get("trajectory_index", 0)),
                         num_sensors=int(n_s),
                         lags=int(cfg.model.lags),
                         placement=str(placement),
