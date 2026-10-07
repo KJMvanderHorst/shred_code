@@ -24,6 +24,40 @@ from .senseiver import Senseiver
 from .robust_shred import RobustSHREDv1, RobustSHREDv2
 
 
+def split_window_indices(
+    n_windows: int,
+    *,
+    train_percentage: float,
+    val_percentage: float,
+    test_percentage: float,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return reproducible interleaved train, validation, and test indices."""
+    percentages = np.asarray([train_percentage, val_percentage, test_percentage], dtype=float)
+    if np.any(percentages <= 0) or not np.isclose(percentages.sum(), 100.0):
+        raise ValueError("train, validation, and test percentages must be positive and sum to 100")
+    if n_windows < 3:
+        raise ValueError(f"at least 3 windows are required, got {n_windows}")
+
+    counts = np.floor(n_windows * percentages / 100.0).astype(int)
+    remainder = n_windows - int(counts.sum())
+    for index in np.argsort(-(n_windows * percentages / 100.0 - counts))[:remainder]:
+        counts[index] += 1
+    if np.any(counts == 0):
+        raise ValueError(
+            "percentages must produce at least one window per split "
+            f"(n_windows={n_windows}, percentages={percentages.tolist()})"
+        )
+
+    permutation = np.random.default_rng(seed).permutation(n_windows)
+    train_end = counts[0]
+    val_end = train_end + counts[1]
+    train_indices = np.sort(permutation[:train_end])
+    valid_indices = np.sort(permutation[train_end:val_end])
+    test_indices = np.sort(permutation[val_end:])
+    return train_indices, valid_indices, test_indices
+
+
 @dataclass
 class RunResult:
     # Reconstructions in original (un-scaled) units, shape (T_test, m).
@@ -347,8 +381,9 @@ def run_experiment(
     num_sensors: int,
     lags: int,
     placement: str,
-    test_size: int,
-    val_size: int,
+    train_percentage: float,
+    val_percentage: float,
+    test_percentage: float,
     hidden_size: int,
     hidden_layers: int,
     l1: int,
@@ -398,15 +433,14 @@ def run_experiment(
     load_X, nx, ny = load_dataset(data_source, effective_path, trajectory_index=trajectory_index)
     n, m = load_X.shape
 
-    # Sequential split over (n - lags) sliding windows.
     n_windows = n - lags
-    if test_size + val_size >= n_windows:
-        raise ValueError(f"test_size + val_size ({test_size + val_size}) >= n_windows ({n_windows})")
-    train_end = n_windows - test_size - val_size
-    val_end = n_windows - test_size
-    train_indices = np.arange(0, train_end)
-    valid_indices = np.arange(train_end, val_end)
-    test_indices = np.arange(val_end, n_windows)
+    train_indices, valid_indices, test_indices = split_window_indices(
+        n_windows,
+        train_percentage=train_percentage,
+        val_percentage=val_percentage,
+        test_percentage=test_percentage,
+        seed=seed,
+    )
 
     if placement == "QR":
         sensor_locations, U_r = qr_place(load_X[train_indices].T, num_sensors)
@@ -452,6 +486,11 @@ def run_experiment(
     train_out = to_tensor(transformed_X[train_indices + lags - 1])
     valid_out = to_tensor(transformed_X[valid_indices + lags - 1])
     test_out = to_tensor(transformed_X[test_indices + lags - 1])
+    reconstruction_size = train_out.shape[-1]
+    if reconstruction_size != m:
+        raise ValueError(
+            f"reconstruction target width ({reconstruction_size}) does not match loaded data width ({m})"
+        )
 
     train_ds = TimeSeriesDataset(train_in, train_out)
     valid_ds = TimeSeriesDataset(valid_in, valid_out)
@@ -461,7 +500,7 @@ def run_experiment(
     valid_ds_sdn = TimeSeriesDataset(valid_in[:, -1, :], valid_out)
     test_ds_sdn = TimeSeriesDataset(test_in[:, -1, :], test_out)
 
-    shred = SHRED(num_sensors, m, hidden_size=hidden_size, hidden_layers=hidden_layers,
+    shred = SHRED(num_sensors, reconstruction_size, hidden_size=hidden_size, hidden_layers=hidden_layers,
                   l1=l1, l2=l2, dropout=dropout, recurrent_cell=recurrent_cell).to(device)
     shred_hist = fit(shred, train_ds, valid_ds, batch_size=batch_size,
                      num_epochs=epochs, lr=lr, verbose=verbose, patience=patience)
@@ -507,7 +546,7 @@ def run_experiment(
             parameter_counts={"SHRED": {"total": _parameter_count(shred)}},
         )
 
-    sdn = SDN(num_sensors, m, l1=l1, l2=l2, dropout=dropout).to(device)
+    sdn = SDN(num_sensors, reconstruction_size, l1=l1, l2=l2, dropout=dropout).to(device)
     sdn_hist = fit(sdn, train_ds_sdn, valid_ds_sdn, batch_size=batch_size,
                    num_epochs=epochs, lr=lr, verbose=verbose, patience=patience)
 
@@ -564,7 +603,7 @@ def run_experiment(
             )
         if senseiver_sdn_enabled:
             senseiver_sdn = SenseiverSDN(
-                output_size=m,
+                output_size=reconstruction_size,
                 input_channels=1,
                 spatial_dim=2,
                 num_latents=senseiver_num_latents,
@@ -593,7 +632,7 @@ def run_experiment(
     )
     if robust_shred_v1_enabled:
         robust_v1_model = RobustSHREDv1(
-            num_sensors, m, sensor_coords, hidden_size=robust_shred_hidden_size,
+            num_sensors, reconstruction_size, sensor_coords, hidden_size=robust_shred_hidden_size,
             num_heads=robust_shred_num_heads, embed_dim=robust_shred_embed_dim,
             num_frequencies=robust_shred_num_frequencies, l1=robust_shred_l1,
             l2=robust_shred_l2, dropout=robust_shred_dropout,
@@ -604,7 +643,7 @@ def run_experiment(
         )
     if robust_shred_v2_enabled:
         robust_v2_model = RobustSHREDv2(
-            num_sensors, m, sensor_coords, num_latents=robust_shred_num_latents,
+            num_sensors, reconstruction_size, sensor_coords, num_latents=robust_shred_num_latents,
             latent_dim=robust_shred_latent_dim, num_frequencies=robust_shred_num_frequencies,
             num_heads=robust_shred_num_heads, hidden_size=robust_shred_hidden_size,
             hidden_layers=robust_shred_hidden_layers, l1=robust_shred_l1,
@@ -750,8 +789,9 @@ def run_robustness_comparison(
     num_sensors: int,
     lags: int,
     placement: str,
-    test_size: int,
-    val_size: int,
+    train_percentage: float,
+    val_percentage: float,
+    test_percentage: float,
     hidden_size: int,
     hidden_layers: int,
     l1: int,
@@ -788,13 +828,13 @@ def run_robustness_comparison(
     n, m = load_X.shape
 
     n_windows = n - lags
-    if test_size + val_size >= n_windows:
-        raise ValueError(f"test_size + val_size ({test_size + val_size}) >= n_windows ({n_windows})")
-    train_end = n_windows - test_size - val_size
-    val_end = n_windows - test_size
-    train_indices = np.arange(0, train_end)
-    valid_indices = np.arange(train_end, val_end)
-    test_indices = np.arange(val_end, n_windows)
+    train_indices, valid_indices, test_indices = split_window_indices(
+        n_windows,
+        train_percentage=train_percentage,
+        val_percentage=val_percentage,
+        test_percentage=test_percentage,
+        seed=seed,
+    )
 
     if placement == "QR":
         sensor_locations, U_r = qr_place(load_X[train_indices].T, num_sensors)
@@ -835,6 +875,11 @@ def run_robustness_comparison(
     train_out = to_tensor(transformed_X[train_indices + lags - 1])
     valid_out = to_tensor(transformed_X[valid_indices + lags - 1])
     test_out = to_tensor(transformed_X[test_indices + lags - 1])
+    reconstruction_size = train_out.shape[-1]
+    if reconstruction_size != m:
+        raise ValueError(
+            f"reconstruction target width ({reconstruction_size}) does not match loaded data width ({m})"
+        )
 
     truth = sc.inverse_transform(test_out.detach().cpu().numpy())
 
@@ -883,7 +928,7 @@ def run_robustness_comparison(
         ) if aug_type != "none" else None
 
         # SHRED variant
-        shred = SHRED(num_sensors, m, hidden_size=hidden_size, hidden_layers=hidden_layers,
+        shred = SHRED(num_sensors, reconstruction_size, hidden_size=hidden_size, hidden_layers=hidden_layers,
                       l1=l1, l2=l2, dropout=dropout, recurrent_cell=recurrent_cell).to(device)
         shred_hist = fit(shred, train_ds, valid_ds, batch_size=batch_size,
                          num_epochs=epochs, lr=lr, verbose=verbose, patience=patience,
@@ -921,7 +966,7 @@ def run_robustness_comparison(
         train_snapshot_sensor = train_in[:, -1, :].unsqueeze(-1)
         valid_snapshot_sensor = valid_in[:, -1, :].unsqueeze(-1)
         senseiver_sdn = SenseiverSDN(
-            output_size=m,
+            output_size=reconstruction_size,
             input_channels=1,
             spatial_dim=2,
             num_latents=8,
@@ -973,7 +1018,7 @@ def run_robustness_comparison(
 
         if robust_shred_v1_enabled:
             robust_v1 = RobustSHREDv1(
-                num_sensors, m, sensor_coords, hidden_size=robust_shred_hidden_size,
+                num_sensors, reconstruction_size, sensor_coords, hidden_size=robust_shred_hidden_size,
                 num_heads=robust_shred_num_heads, embed_dim=robust_shred_embed_dim,
                 num_frequencies=robust_shred_num_frequencies, l1=robust_shred_l1,
                 l2=robust_shred_l2, dropout=robust_shred_dropout,
@@ -982,7 +1027,7 @@ def run_robustness_comparison(
 
         if robust_shred_v2_enabled:
             robust_v2 = RobustSHREDv2(
-                num_sensors, m, sensor_coords, num_latents=robust_shred_num_latents,
+                num_sensors, reconstruction_size, sensor_coords, num_latents=robust_shred_num_latents,
                 latent_dim=robust_shred_latent_dim, num_frequencies=robust_shred_num_frequencies,
                 num_heads=robust_shred_num_heads, hidden_size=robust_shred_hidden_size,
                 hidden_layers=robust_shred_hidden_layers, l1=robust_shred_l1,
@@ -995,7 +1040,7 @@ def run_robustness_comparison(
             aug_type, num_sensors, gaussian_std=gaussian_std, dropout_fill=dropout_fill,
         ) if aug_type != "none" else None
 
-        sdn = SDN(num_sensors, m, l1=l1, l2=l2, dropout=dropout).to(device)
+        sdn = SDN(num_sensors, reconstruction_size, l1=l1, l2=l2, dropout=dropout).to(device)
         sdn_hist = fit(sdn, train_ds_sdn, valid_ds_sdn, batch_size=batch_size,
                        num_epochs=epochs, lr=lr, verbose=verbose, patience=patience,
                        augment_fn=sdn_augment_fn)

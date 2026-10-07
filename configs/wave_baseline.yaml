@@ -8,8 +8,9 @@ data:
   mat: data/CYLINDER_ALL.mat
   wave_file: data/wave_1d.npz
   trajectory_index: 0
-  test_size: 10
-  val_size: 20
+  train_percentage: 80
+  val_percentage: 10
+  test_percentage: 10
 
 model:
   num_sensors: 3

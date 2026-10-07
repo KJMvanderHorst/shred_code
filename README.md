@@ -158,8 +158,9 @@ Key knobs in [configs/cylinder_baseline.yaml](configs/cylinder_baseline.yaml):
 | `model.recurrent_cell` | `gru` | `gru` or `lstm` for the SHRED recurrent core |
 | `model.hidden_size` / `hidden_layers` | 64 / 2 | Recurrent hidden size and stack depth |
 | `model.l1` / `l2` | 350 / 400 | Decoder MLP widths |
-| `data.test_size` | 10 | Last N windows held out for testing |
-| `data.val_size` | 20 | Validation windows preceding the test set |
+| `data.train_percentage` | 80 | Percentage of windows used for training |
+| `data.val_percentage` | 10 | Percentage of windows used for validation |
+| `data.test_percentage` | 10 | Percentage of windows used for testing |
 | `train.epochs` / `patience` | 1000 / 5 | Max epochs + patience (× 20 epochs of no improvement) |
 
 ## Sensor noise model (per sensor)
@@ -224,7 +225,7 @@ The sweep is the long-running job — runtime scales as `len(sensor_counts) × l
 
 ## Implementation notes
 
-- The split is **sequential** over sliding windows (last `test_size` for test, preceding `val_size` for val, rest for train) — chosen for the small cylinder dataset (~150 snapshots). Paper experiments on SST/turbulence use random interleaved splits since they have many more frames.
+- The split is **interleaved** over sliding windows using the configured percentages. A seeded permutation assigns windows to train, validation, and test partitions; each partition is then sorted chronologically for stable downstream plotting and evaluation.
 - `MinMaxScaler` is fit on training rows only and applied globally (matches paper).
 - `fit()` validates every 20 epochs, restores best parameters on early stopping (matches paper's `models.fit`).
 - QR/POD uses the *unscaled* training POD basis and reconstructs from unscaled sensor measurements at the test timestamps.
