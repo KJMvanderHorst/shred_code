@@ -83,6 +83,20 @@ def load_nektar_data(mat_path: str | Path, field: str = "vorticity") -> tuple[np
     return state.T.astype(np.float32), int(nx), int(ny)
 
 
+def nektar_point_coordinates(mat_path: str | Path) -> np.ndarray:
+    """Physical (x, y) of each grid point in the state order of :func:`load_nektar_data`.
+
+    Returns (n_points, 2). For field ``uv`` the state holds two blocks of
+    n_points (u then v) that share these coordinates.
+    """
+    coords = np.asarray(loadmat(str(mat_path))["X_star"], dtype=np.float64)
+    xs = np.unique(coords[:, 0])
+    ys = np.unique(coords[:, 1])
+    grid_x, grid_y = np.meshgrid(xs, ys, indexing="ij")
+    # (x, y) grid -> y fastest, matching to_state() in load_nektar_data.
+    return np.stack([grid_x.T.reshape(-1, order="F"), grid_y.T.reshape(-1, order="F")], axis=1)
+
+
 def load_dataset(
     data_source: str,
     data_path: str | Path,

@@ -86,3 +86,16 @@ def test_nektar_state_follows_vortall_layout(tmp_path: Path) -> None:
     xs = np.linspace(1.0, 2.0, NX)
     # v = x at t=1: constant down each column, increasing left to right.
     np.testing.assert_allclose(field, np.broadcast_to(xs, (NY, NX)), rtol=1e-6)
+
+
+def test_point_coordinates_match_state_layout(tmp_path: Path) -> None:
+    from get_shredded.data import nektar_point_coordinates
+
+    path = tmp_path / "nektar.mat"
+    _write_nektar(path)
+    coords = nektar_point_coordinates(path)
+    load_u, _, _ = load_nektar_data(path, field="u")
+    load_v, _, _ = load_nektar_data(path, field="v")
+    # At t=1: u = -y and v = x at every state index.
+    np.testing.assert_allclose(load_u[0], -coords[:, 1], rtol=1e-6)
+    np.testing.assert_allclose(load_v[0], coords[:, 0], rtol=1e-6)
