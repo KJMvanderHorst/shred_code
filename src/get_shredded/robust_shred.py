@@ -37,43 +37,65 @@ class RobustSHREDv1(nn.Module):
         l1: int = 350,
         l2: int = 400,
         dropout: float = 0.0,
+        input_channels: int = 1,
+        null_token: bool = False,
     ) -> None:
         super().__init__()
         coordinates = torch.as_tensor(sensor_coordinates, dtype=torch.float32)
         if coordinates.ndim != 2 or coordinates.shape[0] != num_sensors:
             raise ValueError("sensor_coordinates must have shape (num_sensors, spatial_dim).")
         self.num_sensors = num_sensors
+        self.input_channels = input_channels
         self.hidden_size = hidden_size
         self.num_frequencies = num_frequencies
         self.spatial_dim = coordinates.shape[-1]
         positional_dim = 2 * self.spatial_dim * num_frequencies
         self.register_buffer("sensor_coordinates", coordinates)
-        self.sensor_embed = nn.Linear(1 + positional_dim, embed_dim)
+        self.sensor_embed = nn.Linear(input_channels + positional_dim, embed_dim)
         self.key_projection = nn.Linear(embed_dim, hidden_size)
         self.value_projection = nn.Linear(embed_dim, hidden_size)
         self.query_projection = nn.Linear(hidden_size, hidden_size)
         self.attention = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
         self.gru_cell = nn.GRUCell(hidden_size, hidden_size)
         self.decoder = _SHREDDecoder(hidden_size, output_size, l1, l2, dropout)
+        # Optional learned key/value that is never masked (see ``mask`` in forward).
+        self.null_key = self.null_value = None
+        if null_token:
+            self.null_key = nn.Parameter(torch.randn(1, 1, hidden_size) * 0.02)
+            self.null_value = nn.Parameter(torch.randn(1, 1, hidden_size) * 0.02)
 
-    def forward(self, x: Tensor) -> Tensor:
-        if x.ndim != 3 or x.shape[-1] != self.num_sensors:
-            raise ValueError("x must have shape (batch, lags, num_sensors).")
+    def latent(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
+        """Final recurrent hidden state (batch, hidden_size).
+
+        x: (batch, lags, input_channels * num_sensors), channel blocks concatenated.
+        mask: optional bool (batch, num_sensors), True = sensor missing; masked
+        sensors are excluded from attention at every timestep.
+        """
+        if x.ndim != 3 or x.shape[-1] != self.input_channels * self.num_sensors:
+            raise ValueError("x must have shape (batch, lags, input_channels * num_sensors).")
         batch_size = x.shape[0]
         device = x.device
         coords = self.sensor_coordinates.to(device)
         positions = spatial_positional_encoding(coords, self.num_frequencies)
         positions = positions.unsqueeze(0).expand(batch_size, -1, -1)
         hidden = torch.zeros(batch_size, self.hidden_size, device=device, dtype=x.dtype)
+        if self.null_key is not None and mask is not None:
+            mask = torch.cat([mask, mask.new_zeros(batch_size, 1)], dim=1)
         for timestep in range(x.shape[1]):
-            values = x[:, timestep, :].unsqueeze(-1)
+            values = x[:, timestep, :].reshape(batch_size, self.input_channels, self.num_sensors).transpose(1, 2)
             embedded = self.sensor_embed(torch.cat([values, positions], dim=-1))
             keys = self.key_projection(embedded)
             sensor_values = self.value_projection(embedded)
+            if self.null_key is not None:
+                keys = torch.cat([keys, self.null_key.expand(batch_size, -1, -1)], dim=1)
+                sensor_values = torch.cat([sensor_values, self.null_value.expand(batch_size, -1, -1)], dim=1)
             query = self.query_projection(hidden).unsqueeze(1)
-            context, _ = self.attention(query, keys, sensor_values, need_weights=False)
+            context, _ = self.attention(query, keys, sensor_values, key_padding_mask=mask, need_weights=False)
             hidden = self.gru_cell(context.squeeze(1), hidden)
-        return self.decoder(hidden)
+        return hidden
+
+    def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
+        return self.decoder(self.latent(x, mask))
 
 
 class RobustSHREDv2(nn.Module):
@@ -93,34 +115,49 @@ class RobustSHREDv2(nn.Module):
         l1: int = 350,
         l2: int = 400,
         dropout: float = 0.0,
+        input_channels: int = 1,
+        null_token: bool = False,
     ) -> None:
         super().__init__()
         coordinates = torch.as_tensor(sensor_coordinates, dtype=torch.float32)
         if coordinates.ndim != 2 or coordinates.shape[0] != num_sensors:
             raise ValueError("sensor_coordinates must have shape (num_sensors, spatial_dim).")
         self.num_sensors = num_sensors
+        self.input_channels = input_channels
         self.register_buffer("sensor_coordinates", coordinates)
         self.encoder = SenseiverEncoder(
-            input_channels=1,
+            input_channels=input_channels,
             spatial_dim=coordinates.shape[-1],
             num_latents=num_latents,
             latent_dim=latent_dim,
             num_frequencies=num_frequencies,
             num_heads=num_heads,
             dropout=dropout,
+            null_token=null_token,
         )
         latent_size = num_latents * latent_dim
         self.rnn = nn.GRU(latent_size, hidden_size, num_layers=hidden_layers, batch_first=True)
         self.decoder = _SHREDDecoder(hidden_size, output_size, l1, l2, dropout)
 
-    def forward(self, x: Tensor) -> Tensor:
-        if x.ndim != 3 or x.shape[-1] != self.num_sensors:
-            raise ValueError("x must have shape (batch, lags, num_sensors).")
+    def latent(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
+        """Final hidden state of the last GRU layer (batch, hidden_size).
+
+        x: (batch, lags, input_channels * num_sensors), channel blocks concatenated.
+        mask: optional bool (batch, num_sensors), True = sensor missing for the
+        whole window; masked sensors are excluded from encoder attention.
+        """
+        if x.ndim != 3 or x.shape[-1] != self.input_channels * self.num_sensors:
+            raise ValueError("x must have shape (batch, lags, input_channels * num_sensors).")
         batch_size, lags, _ = x.shape
-        values = x.reshape(batch_size * lags, self.num_sensors, 1)
+        values = x.reshape(batch_size * lags, self.input_channels, self.num_sensors).transpose(1, 2)
         coords = self.sensor_coordinates.to(x.device)
         coords = coords.unsqueeze(0).expand(batch_size * lags, -1, -1)
-        latents = self.encoder(values, coords).flatten(start_dim=1)
+        if mask is not None:
+            mask = mask.repeat_interleave(lags, dim=0)
+        latents = self.encoder(values, coords, mask).flatten(start_dim=1)
         latent_sequence = latents.reshape(batch_size, lags, -1)
         _, hidden = self.rnn(latent_sequence)
-        return self.decoder(hidden[-1])
+        return hidden[-1]
+
+    def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
+        return self.decoder(self.latent(x, mask))

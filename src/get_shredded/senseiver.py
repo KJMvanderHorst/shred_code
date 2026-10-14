@@ -55,13 +55,15 @@ class _LatentAttentionBlock(nn.Module):
         )
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
-    def forward(self, query: Tensor, key_value: Tensor | None = None) -> Tensor:
+    def forward(
+        self, query: Tensor, key_value: Tensor | None = None, key_padding_mask: Tensor | None = None
+    ) -> Tensor:
         if key_value is None:
             key_value = query
         q = self.norm(query)
         k = self.norm(key_value)
         v = self.norm(key_value)
-        out, _ = self.mha(q, k, v, need_weights=False)
+        out, _ = self.mha(q, k, v, key_padding_mask=key_padding_mask, need_weights=False)
         return self.out_proj(out) + query
 
 
@@ -78,6 +80,7 @@ class SenseiverEncoder(nn.Module):
         num_heads: int = 4,
         encoder_hidden_dim: int | None = None,
         dropout: float = 0.0,
+        null_token: bool = False,
     ) -> None:
         super().__init__()
         if encoder_hidden_dim is None:
@@ -103,6 +106,13 @@ class SenseiverEncoder(nn.Module):
         self.encoder_cross_attention = _LatentAttentionBlock(self.latent_dim, num_heads, dropout)
         self.encoder_recurrent_block = _LatentAttentionBlock(self.latent_dim, num_heads, dropout)
 
+        # Optional learned key/value token that is never masked, so cross-attention
+        # stays well defined when sensors are removed via ``mask``.
+        self.null_token = None
+        if null_token:
+            self.null_token = nn.Parameter(torch.empty(1, 1, self.latent_dim))
+            nn.init.xavier_uniform_(self.null_token)
+
     def _prepare_sensor_values(self, sensor_values: Tensor) -> Tensor:
         if sensor_values.dim() == 2:
             return sensor_values.unsqueeze(0)
@@ -123,7 +133,8 @@ class SenseiverEncoder(nn.Module):
             raise ValueError(f"{name} last dimension must be {self.spatial_dim}, got {coordinates.shape[-1]}.")
         return coordinates
 
-    def encode(self, sensor_values: Tensor, sensor_coordinates: Tensor) -> Tensor:
+    def encode(self, sensor_values: Tensor, sensor_coordinates: Tensor, mask: Tensor | None = None) -> Tensor:
+        """mask: optional bool (batch, Ns), True = sensor missing (excluded from attention)."""
         sensor_values = self._prepare_sensor_values(sensor_values)
         sensor_coordinates = self._prepare_coordinates(sensor_coordinates, self.spatial_dim, "sensor_coordinates")
 
@@ -148,14 +159,18 @@ class SenseiverEncoder(nn.Module):
         sensor_pos = spatial_positional_encoding(sensor_coordinates, self.num_frequencies)
         sensor_input = torch.cat([sensor_values, sensor_pos], dim=-1)
         sensor_features = self.sensor_to_latent(self.sensor_projection(sensor_input))
+        if self.null_token is not None:
+            sensor_features = torch.cat([sensor_features, self.null_token.expand(batch_size, -1, -1)], dim=1)
+            if mask is not None:
+                mask = torch.cat([mask, mask.new_zeros(batch_size, 1)], dim=1)
         latent = self.latent_query.unsqueeze(0).expand(batch_size, -1, -1)
-        latent = self.encoder_cross_attention(latent, sensor_features)
+        latent = self.encoder_cross_attention(latent, sensor_features, key_padding_mask=mask)
         latent = self.encoder_recurrent_block(latent)
         latent = self.encoder_recurrent_block(latent)
         return latent
 
-    def forward(self, sensor_values: Tensor, sensor_coordinates: Tensor) -> Tensor:
-        return self.encode(sensor_values, sensor_coordinates)
+    def forward(self, sensor_values: Tensor, sensor_coordinates: Tensor, mask: Tensor | None = None) -> Tensor:
+        return self.encode(sensor_values, sensor_coordinates, mask)
 
 
 class Senseiver(nn.Module):
@@ -294,6 +309,7 @@ class SenseiverSDN(nn.Module):
         l1: int = 350,
         l2: int = 400,
         dropout: float = 0.0,
+        null_token: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -312,6 +328,7 @@ class SenseiverSDN(nn.Module):
             num_heads=num_heads,
             encoder_hidden_dim=encoder_hidden_dim,
             dropout=dropout,
+            null_token=null_token,
         )
         self.decoder = nn.Sequential(
             nn.Linear(num_latents * latent_dim, l1),
@@ -323,9 +340,12 @@ class SenseiverSDN(nn.Module):
             nn.Linear(l2, output_size),
         )
 
-    def encode(self, sensor_values: Tensor, sensor_coordinates: Tensor) -> Tensor:
-        return self.encoder.encode(sensor_values, sensor_coordinates)
+    def encode(self, sensor_values: Tensor, sensor_coordinates: Tensor, mask: Tensor | None = None) -> Tensor:
+        return self.encoder.encode(sensor_values, sensor_coordinates, mask)
 
-    def forward(self, sensor_values: Tensor, sensor_coordinates: Tensor) -> Tensor:
-        latent = self.encode(sensor_values, sensor_coordinates)
-        return self.decoder(latent.flatten(start_dim=1))
+    def latent(self, sensor_values: Tensor, sensor_coordinates: Tensor, mask: Tensor | None = None) -> Tensor:
+        """Flattened encoder latent (batch, num_latents * latent_dim) fed to the decoder."""
+        return self.encode(sensor_values, sensor_coordinates, mask).flatten(start_dim=1)
+
+    def forward(self, sensor_values: Tensor, sensor_coordinates: Tensor, mask: Tensor | None = None) -> Tensor:
+        return self.decoder(self.latent(sensor_values, sensor_coordinates, mask))
