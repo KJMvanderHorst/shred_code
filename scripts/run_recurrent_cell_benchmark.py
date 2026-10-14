@@ -26,7 +26,9 @@ def main(cfg: DictConfig) -> None:
     output_dir = Path(to_absolute_path(cfg.comparison.output_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
     data_source = str(cfg.data.source).lower()
-    dataset_path = Path(to_absolute_path(cfg.data.wave_file if data_source == "wave" else cfg.data.mat))
+    dataset_file = {"wave": cfg.data.get("wave_file"), "nektar": cfg.data.get("nektar_file")}.get(data_source, cfg.data.mat)
+    dataset_path = Path(to_absolute_path(dataset_file))
+    nektar_field = str(cfg.data.get("nektar_field", "vorticity")).lower()
     cells = [str(cell).lower() for cell in cfg.comparison.cells]
     verbose = str(cfg.execution.mode).lower() == "verbose"
 
@@ -49,6 +51,9 @@ def main(cfg: DictConfig) -> None:
             "patience": int(cfg.train.patience),
             "shred_only": bool(cfg.comparison.shred_only),
         }
+        if data_source == "nektar":
+            # Only nektar runs carry these keys so existing cylinder/wave config_ids are unchanged.
+            config.update({"data_source": data_source, "nektar_field": nektar_field})
         config_id = _stable_config_fingerprint(config)
         summary_path = cell_dir / "result.json"
         if summary_path.exists():
@@ -70,6 +75,7 @@ def main(cfg: DictConfig) -> None:
             data_source=data_source,
             data_path=dataset_path,
             trajectory_index=int(cfg.data.get("trajectory_index", 0)),
+            nektar_field=nektar_field,
             num_sensors=int(cfg.model.num_sensors),
             lags=int(cfg.model.lags),
             placement=str(cfg.model.placement),

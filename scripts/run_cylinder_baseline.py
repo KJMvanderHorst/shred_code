@@ -36,7 +36,9 @@ def main(cfg: DictConfig) -> None:
     verbose = execution_mode == "verbose"
     outputs_root = Path(to_absolute_path(cfg.outputs.root))
     data_source = str(cfg.data.source).lower()
-    dataset_path = Path(to_absolute_path(cfg.data.wave_file if data_source == "wave" else cfg.data.mat))
+    dataset_file = {"wave": cfg.data.get("wave_file"), "nektar": cfg.data.get("nektar_file")}.get(data_source, cfg.data.mat)
+    dataset_path = Path(to_absolute_path(dataset_file))
+    nektar_field = str(cfg.data.get("nektar_field", "vorticity")).lower()
     config = {
         "experiment": "cylinder_baseline",
         "data_source": data_source,
@@ -55,6 +57,9 @@ def main(cfg: DictConfig) -> None:
         "noise_enabled": bool(cfg.noise.enabled),
         "noise_modes": [str(mode) for mode in cfg.noise.modes],
     }
+    if data_source == "nektar":
+        # Only nektar runs carry these keys so existing cylinder/wave config_ids are unchanged.
+        config.update({"data_source": data_source, "nektar_field": nektar_field})
     config_id = _stable_config_fingerprint(config)
     summary_path = outputs_root / "result.json"
     if summary_path.exists():
@@ -74,6 +79,7 @@ def main(cfg: DictConfig) -> None:
         data_source=data_source,
         data_path=dataset_path,
         trajectory_index=int(cfg.data.get("trajectory_index", 0)),
+        nektar_field=nektar_field,
         num_sensors=int(cfg.model.num_sensors),
         lags=int(cfg.model.lags),
         placement=str(cfg.model.placement),

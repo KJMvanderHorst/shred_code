@@ -20,7 +20,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from get_shredded.data import build_sensor_windows, load_cylinder_data, qr_place, qrpod_reconstruct
+from get_shredded.data import build_sensor_windows, load_dataset, qr_place, qrpod_reconstruct
 from get_shredded.experiment import RunResult, split_window_indices
 from get_shredded.model import SDN, SHRED, TimeSeriesDataset
 from get_shredded.senseiver import Senseiver
@@ -88,8 +88,14 @@ def _build_result_from_checkpoint(
         )
 
     cfg = OmegaConf.create(ckpt["config"])
-    mat_path = Path(to_absolute_path(str(cfg.data.mat)))
-    load_X, nx, ny = load_cylinder_data(mat_path)
+    data_source = str(cfg.data.get("source", "cylinder")).lower()
+    dataset_file = {"wave": cfg.data.get("wave_file"), "nektar": cfg.data.get("nektar_file")}.get(data_source, cfg.data.mat)
+    load_X, nx, ny = load_dataset(
+        data_source,
+        Path(to_absolute_path(str(dataset_file))),
+        trajectory_index=int(cfg.data.get("trajectory_index", 0)),
+        nektar_field=str(cfg.data.get("nektar_field", "vorticity")),
+    )
     n, m = load_X.shape
 
     num_sensors = int(cfg.model.num_sensors)

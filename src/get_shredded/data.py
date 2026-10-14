@@ -22,26 +22,90 @@ def load_cylinder_data(mat_path: str | Path) -> tuple[np.ndarray, int, int]:
     return load_X, nx, ny
 
 
+NEKTAR_FIELDS = ("vorticity", "u", "v", "uv", "p")
+
+
+def load_nektar_data(mat_path: str | Path, field: str = "vorticity") -> tuple[np.ndarray, int, int]:
+    """Load the Nektar cylinder-wake `.mat` (X_star, U_star, p_star, t).
+
+    The file stores points on a regular grid with streamwise x varying fastest.
+    The state is re-ordered to the VORTALL convention: cross-stream y varies
+    fastest and the returned (nx, ny) are (cross-stream, streamwise) counts, so
+    plots and grid coordinates match the CYLINDER_ALL data (flow left to right).
+    Vorticity is derived from u, v with second-order finite differences. `uv`
+    stacks [u; v] and reports ny doubled so plots show u and v side by side.
+    Returns (load_X, nx, ny) with load_X of shape (N, m).
+    """
+    field = str(field).lower()
+    if field not in NEKTAR_FIELDS:
+        raise ValueError(f"Unsupported nektar field '{field}'. Expected one of: {', '.join(NEKTAR_FIELDS)}.")
+    data = loadmat(str(mat_path))
+    for key in ("X_star", "U_star", "p_star"):
+        if key not in data:
+            raise KeyError(f"Expected key '{key}' in nektar .mat file")
+    coords = np.asarray(data["X_star"], dtype=np.float64)
+    xs = np.unique(coords[:, 0])
+    ys = np.unique(coords[:, 1])
+    n_stream, n_cross = xs.size, ys.size
+    grid_x, grid_y = np.meshgrid(xs, ys, indexing="ij")
+    if (
+        n_stream * n_cross != coords.shape[0]
+        or not np.allclose(coords[:, 0], grid_x.ravel(order="F"))
+        or not np.allclose(coords[:, 1], grid_y.ravel(order="F"))
+    ):
+        raise ValueError("X_star is not a regular grid stored x-fastest; cannot map points to the grid.")
+
+    U = np.asarray(data["U_star"], dtype=np.float64)
+    n_t = U.shape[2]
+    # Grids indexed (x, y, t) in physical coordinates.
+    u = U[:, 0, :].reshape(n_stream, n_cross, n_t, order="F")
+    v = U[:, 1, :].reshape(n_stream, n_cross, n_t, order="F")
+
+    def to_state(grid: np.ndarray) -> np.ndarray:
+        # (x, y, t) -> (m, t) with y fastest, matching reshape(nx, ny, order="F").
+        return grid.transpose(1, 0, 2).reshape(n_cross * n_stream, n_t, order="F")
+
+    nx, ny = n_cross, n_stream
+    if field == "vorticity":
+        dv_dx = np.gradient(v, xs, axis=0, edge_order=2)
+        du_dy = np.gradient(u, ys, axis=1, edge_order=2)
+        state = to_state(dv_dx - du_dy)
+    elif field == "u":
+        state = to_state(u)
+    elif field == "v":
+        state = to_state(v)
+    elif field == "uv":
+        state = np.concatenate([to_state(u), to_state(v)], axis=0)
+        ny = 2 * ny
+    else:
+        p = np.asarray(data["p_star"], dtype=np.float64).reshape(n_stream, n_cross, n_t, order="F")
+        state = to_state(p)
+    return state.T.astype(np.float32), int(nx), int(ny)
+
+
 def load_dataset(
     data_source: str,
     data_path: str | Path,
     *,
     trajectory_index: int = 0,
+    nektar_field: str = "vorticity",
 ) -> tuple[np.ndarray, int, int]:
     """Load a raw dataset and return a training-ready (N_time, N_state) matrix.
 
-    Supported sources are the cylinder-vortex `.mat` dataset and the synthetic
-    1D wave `.npz` prototype. The downstream model code stays neutral to the
+    Supported sources are the cylinder-vortex `.mat` dataset, the Nektar
+    cylinder-wake `.mat` dataset and the synthetic 1D wave `.npz` prototype. The downstream model code stays neutral to the
     dataset origin as long as the raw state matrix follows the repo contract.
     """
     source = str(data_source).lower()
     if source in {"cylinder", "cylinder_data", "mat", "cylinder_mat"}:
         return load_cylinder_data(data_path)
+    if source == "nektar":
+        return load_nektar_data(data_path, field=nektar_field)
     if source in {"wave", "wave_1d", "synthetic_wave", "synthetic"}:
         return load_wave_data(data_path, trajectory_index=trajectory_index)
     raise ValueError(
         f"Unsupported data_source='{data_source}'. Expected one of: "
-        "cylinder, wave."
+        "cylinder, nektar, wave."
     )
 
 

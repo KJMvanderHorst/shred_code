@@ -7,6 +7,8 @@ data:
   source: cylinder
   mat: data/CYLINDER_ALL.mat
   wave_file: data/wave_1d.npz
+  nektar_file: data/cylinder_nektar_wake.mat
+  nektar_field: vorticity  # nektar only: vorticity, u, v, uv, or p
   trajectory_index: 0
   train_percentage: 80
   val_percentage: 10

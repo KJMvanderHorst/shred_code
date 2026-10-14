@@ -378,6 +378,7 @@ def run_experiment(
     data_source: str = "cylinder",
     data_path: str | Path | None = None,
     trajectory_index: int = 0,
+    nektar_field: str = "vorticity",
     num_sensors: int,
     lags: int,
     placement: str,
@@ -430,7 +431,9 @@ def run_experiment(
     torch.manual_seed(seed)
 
     effective_path = Path(data_path) if data_path is not None else Path(mat_path)
-    load_X, nx, ny = load_dataset(data_source, effective_path, trajectory_index=trajectory_index)
+    load_X, nx, ny = load_dataset(
+        data_source, effective_path, trajectory_index=trajectory_index, nektar_field=nektar_field
+    )
     n, m = load_X.shape
 
     n_windows = n - lags
@@ -786,6 +789,7 @@ def run_robustness_comparison(
     data_source: str = "cylinder",
     data_path: str | Path | None = None,
     trajectory_index: int = 0,
+    nektar_field: str = "vorticity",
     num_sensors: int,
     lags: int,
     placement: str,
@@ -824,7 +828,9 @@ def run_robustness_comparison(
     torch.manual_seed(seed)
 
     effective_path = Path(data_path) if data_path is not None else Path(mat_path)
-    load_X, nx, ny = load_dataset(data_source, effective_path, trajectory_index=trajectory_index)
+    load_X, nx, ny = load_dataset(
+        data_source, effective_path, trajectory_index=trajectory_index, nektar_field=nektar_field
+    )
     n, m = load_X.shape
 
     n_windows = n - lags
