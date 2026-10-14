@@ -147,3 +147,61 @@ def qrpod_reconstruct(
     for i in range(num_sensors):
         C[i, sensor_locations[i]] = 1.0
     return (U_r @ np.linalg.inv(C @ U_r) @ sensor_measurements.T).T
+
+
+def qr_place_probes(
+    data_matrix: np.ndarray, num_locations: int, rank: int, n_points: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """QR-pivoting placement of multi-channel probes on a stacked state.
+
+    data_matrix: (C * n_points, N) — channel blocks stacked, e.g. [u; v].
+    Pivoting runs on the rank-`rank` POD basis of the stacked state; pivots are
+    walked in order, mapped to their grid point (index mod n_points), and the
+    first `num_locations` distinct points are kept. Each probe then reads every
+    channel at its point. Returns (locations, U_r) with locations in [0, n_points).
+    """
+    u, _, _ = np.linalg.svd(data_matrix, full_matrices=False)
+    U_r = u[:, :rank]
+    _, _, pivot = scipy.linalg.qr(U_r.T, pivoting=True)
+    locations: list[int] = []
+    for index in pivot:
+        point = int(index) % n_points
+        if point not in locations:
+            locations.append(point)
+            if len(locations) == num_locations:
+                break
+    if len(locations) < num_locations:
+        raise ValueError(f"could only place {len(locations)} distinct probes, requested {num_locations}")
+    return np.asarray(locations), U_r
+
+
+def gappy_pod_reconstruct(
+    sensor_measurements: np.ndarray,
+    missing: np.ndarray | None,
+    sensor_state_indices: np.ndarray,
+    U_r: np.ndarray,
+) -> np.ndarray:
+    """Gappy POD using only the available measurements of each sample.
+
+    Per sample: x_hat = U_r' (C_m U_r')^+ y_m (least squares), where C_m keeps
+    the available rows and r' = min(r, number of available measurements).
+    sensor_measurements: (T, M) in unscaled units; missing: bool (T, M) or None
+    (True = measurement unavailable); sensor_state_indices: (M,) state index of
+    each measurement row. Returns (T, m). With nothing missing and M == r this
+    equals :func:`qrpod_reconstruct`.
+    """
+    y = np.asarray(sensor_measurements, dtype=np.float64)
+    basis = np.asarray(U_r, dtype=np.float64)
+    CU = basis[np.asarray(sensor_state_indices)]
+    if missing is None:
+        missing = np.zeros(y.shape, dtype=bool)
+    rank = basis.shape[1]
+    out = np.empty((y.shape[0], basis.shape[0]), dtype=np.float64)
+    patterns, inverse = np.unique(missing, axis=0, return_inverse=True)
+    for pattern_id, pattern in enumerate(patterns):
+        rows = np.flatnonzero(inverse.ravel() == pattern_id)
+        available = ~pattern
+        r_eff = min(rank, int(available.sum()))
+        coef, *_ = np.linalg.lstsq(CU[available][:, :r_eff], y[rows][:, available].T, rcond=None)
+        out[rows] = (basis[:, :r_eff] @ coef).T
+    return out.astype(np.asarray(sensor_measurements).dtype, copy=False)
