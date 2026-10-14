@@ -166,26 +166,35 @@ def qrpod_reconstruct(
 def qr_place_probes(
     data_matrix: np.ndarray, num_locations: int, rank: int, n_points: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """QR-pivoting placement of multi-channel probes on a stacked state.
+    """Block QR pivoting: choose grid points for multi-channel probes.
 
     data_matrix: (C * n_points, N) — channel blocks stacked, e.g. [u; v].
-    Pivoting runs on the rank-`rank` POD basis of the stacked state; pivots are
-    walked in order, mapped to their grid point (index mod n_points), and the
-    first `num_locations` distinct points are kept. Each probe then reads every
-    channel at its point. Returns (locations, U_r) with locations in [0, n_points).
+    A probe at a grid point measures every channel there, so pivoting runs over
+    points: each point is the block of its C columns of U_r^T, and at every
+    step the point whose residual block spans the largest volume
+    (sqrt det of its Gram matrix) is chosen, then its block is projected out.
+    This is the greedy volume criterion of QR column pivoting applied to whole
+    probes; with C == 1 it reduces to standard pivoted QR (see :func:`qr_place`).
+    Returns (locations in [0, n_points), U_r).
     """
     u, _, _ = np.linalg.svd(data_matrix, full_matrices=False)
     U_r = u[:, :rank]
-    _, _, pivot = scipy.linalg.qr(U_r.T, pivoting=True)
+    channels = U_r.shape[0] // n_points
+    # residual[:, c, p] = column of U_r^T for channel c at point p.
+    residual = U_r.T.reshape(rank, channels, n_points).astype(np.float64).copy()
+    available = np.ones(n_points, dtype=bool)
     locations: list[int] = []
-    for index in pivot:
-        point = int(index) % n_points
-        if point not in locations:
-            locations.append(point)
-            if len(locations) == num_locations:
-                break
-    if len(locations) < num_locations:
-        raise ValueError(f"could only place {len(locations)} distinct probes, requested {num_locations}")
+    for _ in range(num_locations):
+        gram = np.einsum("icp,idp->pcd", residual, residual)
+        # det for C <= rank remaining; fall back to the trace once the residual
+        # space is too small to hold a full block.
+        score = np.linalg.det(gram) if channels * (len(locations) + 1) <= rank else np.trace(gram, axis1=1, axis2=2)
+        score[~available] = -np.inf
+        point = int(np.argmax(score))
+        locations.append(point)
+        available[point] = False
+        q, _ = np.linalg.qr(residual[:, :, point])
+        residual -= np.einsum("ic,jc,jdp->idp", q, q, residual)
     return np.asarray(locations), U_r
 
 

@@ -51,7 +51,7 @@ train:
 
 meeting:
   num_sensors: 8
-  qr_rank: 16               # POD rank for QR placement and gappy POD (2 x num_sensors)
+  qr_rank: 16               # POD rank for block-QR probe placement and gappy POD (2 x num_sensors)
   seeds: [0, 1, 2]
   methods: [SHRED-noise, SHRED-dropout, SDN-noise, SDN-dropout, SenseiverSDN, RobustSHREDv1, RobustSHREDv2, GappyPOD]
   noise_frac: 0.05          # sigma = noise_frac x per-channel training std (unscaled)

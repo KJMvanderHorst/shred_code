@@ -43,6 +43,13 @@ class QRProbePlacementTest(unittest.TestCase):
         np.testing.assert_array_equal(locs, ref_locs)
         np.testing.assert_allclose(U_r, ref_U)
 
+    def test_two_channel_square_system_is_well_conditioned(self) -> None:
+        rng = np.random.default_rng(2)
+        X = rng.normal(size=(80, 12)) @ rng.normal(size=(12, 50))  # two blocks of 40 points
+        locs, U_r = qr_place_probes(X, 6, rank=12, n_points=40)
+        rows = np.concatenate([locs, locs + 40])
+        self.assertLess(np.linalg.cond(U_r[rows]), 1e3)
+
     def test_two_channel_probes_are_distinct_points(self) -> None:
         X = _data(m=80)  # two channel blocks of 40 points
         locs, U_r = qr_place_probes(X, 6, rank=12, n_points=40)

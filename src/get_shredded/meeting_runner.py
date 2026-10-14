@@ -290,7 +290,7 @@ def run_config(cfg, method: str, seed: int) -> dict[str, Any]:
         "nektar_field": str(cfg.data.nektar_field),
         "split": [float(cfg.data.train_percentage), float(cfg.data.val_percentage), float(cfg.data.test_percentage)],
         "num_sensors": int(cfg.meeting.num_sensors),
-        "placement": "QR",
+        "placement": "QR-probe-block",
         "qr_rank": int(cfg.meeting.qr_rank),
         "lags": int(cfg.model.lags),
         "noise_frac": float(cfg.meeting.noise_frac),
