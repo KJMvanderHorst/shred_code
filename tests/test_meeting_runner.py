@@ -46,3 +46,18 @@ def test_run_all_writes_artifacts_and_skips_completed(tmp_path: Path, capsys) ->
     capsys.readouterr()
     again = run_all(cfg)
     assert [r["status"] for r in again] == ["skipped"] * len(methods)
+
+
+def test_masked_invariance_check_on_trained_models(tmp_path: Path) -> None:
+    from get_shredded.meeting_runner import masked_invariance_check
+
+    data = tmp_path / "nektar.mat"
+    _write_random_nektar(data)
+    cfg = load_config([
+        f"data.nektar_file={data}", f"outputs.root={tmp_path / 'out'}", "model.lags=3", "train.epochs=2",
+        "meeting.num_sensors=3", "meeting.qr_rank=6", "meeting.seeds=[0]", "meeting.test_draws=2",
+        "meeting.methods=[SenseiverSDN,RobustSHREDv1,RobustSHREDv2]",
+    ])
+    run_all(cfg, verbose=True)
+    for method in ("SenseiverSDN", "RobustSHREDv1", "RobustSHREDv2"):
+        assert masked_invariance_check(cfg, method, 0) < 1e-4

@@ -543,3 +543,27 @@ def build_summary(root: str | Path, methods: list[str], seeds: list[int]) -> dic
         entry["wall_time_s"] = float(np.mean([r["wall_time_s"] for r in runs]))
         summary["methods"][method] = entry
     return summary
+
+
+def masked_invariance_check(cfg, method: str, seed: int) -> float:
+    """Max |output change| of a trained masked model when failed sensors' values are set to 1e3.
+
+    Uses draw 0 of the p=0.3 test set. Should be ~0 (float rounding) for masked methods.
+    """
+    spec = METHODS[method]
+    if spec["input"] != "masked" or spec["kind"] == "pod":
+        raise ValueError(f"{method} is not a masked network")
+    root = _abs(cfg.outputs.root)
+    sd = prepare_seed(cfg, seed)
+    model = _build_model(cfg, sd, spec["kind"], "cpu")
+    model.load_state_dict(torch.load(root / f"seed{seed}" / method / "model.pt", map_location="cpu"))
+    model.eval()
+    p = max(sd.test_mask)
+    mask = sd.test_mask[p][0]
+    x = _format_inputs(sd, sd.windows[sd.test_idx], sd.test_noise[0], mask, "masked", False)
+    perturbed = x.copy()
+    failed = expand_mask(mask, sd.channels)[:, None, :].repeat(sd.lags, axis=1)
+    perturbed[..., : sd.channels * sd.num_sensors][failed] = 1e3
+    with torch.no_grad():
+        diff = model(torch.tensor(perturbed)) - model(torch.tensor(x))
+    return float(diff.abs().max())
