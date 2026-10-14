@@ -1,10 +1,13 @@
-# Agent Instructions — get-shredded
+# CLAUDE.md — get-shredded
 
 ## Project
 
 This repository reimplements SHRED and compares it with SDN,
 Senseiver/SenseiverSDN, RobustSHRED variants, and QR/POD on the
 cylinder-vortex dataset.
+
+Stack: Python >= 3.10, uv, Hydra, NumPy, SciPy, PyTorch, scikit-learn,
+matplotlib, tqdm.
 
 The project is a scientific research codebase. Preserve experimental
 semantics and reproducibility unless the task explicitly requests a
@@ -75,7 +78,8 @@ Do not autonomously design follow-up experiments.
 ## Code changes
 
 - Prefer small, localized changes.
-- Preserve existing Hydra configuration patterns.
+- Preserve existing Hydra configuration patterns; use Hydra for experiment
+  parameters rather than introducing parallel configuration mechanisms.
 - Preserve existing output formats unless the task requires a change.
 - Add tests for behavioral changes where practical.
 - Do not rewrite working scientific code merely for stylistic reasons.

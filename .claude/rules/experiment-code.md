@@ -1,5 +1,10 @@
 ---
-applyTo: "scripts/**/*.py,configs/**/*.yaml,src/get_shredded/experiment.py,src/get_shredded/model.py,src/get_shredded/plotting.py"
+paths:
+  - "scripts/**/*.py"
+  - "configs/**/*.yaml"
+  - "src/get_shredded/experiment.py"
+  - "src/get_shredded/model.py"
+  - "src/get_shredded/plotting.py"
 ---
 
 # Experiment-code instructions
