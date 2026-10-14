@@ -1,0 +1,66 @@
+# Meeting experiment: noise + sensor-dropout robustness and latent invariance
+# on the Nektar cylinder wake, reconstructing u and v from (u, v) probes.
+#   uv run python scripts/run_meeting.py
+#   uv run python scripts/run_meeting.py train.epochs=20 meeting.seeds=[0] outputs.root=outputs/meeting_2026-10-14_quick
+defaults:
+  - default
+  - _self_
+
+data:
+  nektar_file: data/cylinder_nektar_wake.mat
+  nektar_field: uv          # state = [u; v]; each probe reads both channels
+  train_percentage: 80
+  val_percentage: 10
+  test_percentage: 10
+
+model:                      # SHRED / SDN (same as robustness_comparison.yaml)
+  lags: 10
+  recurrent_cell: gru
+  hidden_size: 64
+  hidden_layers: 2
+  l1: 350
+  l2: 400
+  dropout: 0.0
+
+robust_shred:
+  hidden_size: 64
+  hidden_layers: 2
+  num_heads: 4
+  embed_dim: 32
+  num_latents: 8
+  latent_dim: 32
+  num_frequencies: 8
+  l1: 350
+  l2: 400
+  dropout: 0.0
+
+senseiver_sdn:              # values hard-coded in run_robustness_comparison
+  num_latents: 8
+  latent_dim: 32
+  num_frequencies: 8
+  num_heads: 4
+  l1: 350
+  l2: 400
+  dropout: 0.0
+
+train:
+  epochs: 1000
+  batch_size: 64
+  lr: 1.0e-3
+  patience: 5
+
+meeting:
+  num_sensors: 8
+  qr_rank: 16               # POD rank for QR placement and gappy POD (2 x num_sensors)
+  seeds: [0, 1, 2]
+  methods: [SHRED-noise, SHRED-dropout, SDN-noise, SDN-dropout, SenseiverSDN, RobustSHREDv1, RobustSHREDv2, GappyPOD]
+  noise_frac: 0.05          # sigma = noise_frac x per-channel training std (unscaled)
+  train_p: 0.3              # training dropout rate for -dropout and masked methods
+  test_ps: [0.0, 0.3]
+  test_draws: 10            # fixed noise/mask realisations per test window
+  null_token: true          # learned never-masked token in masked attention
+  clip_pod: true            # clip gappy POD to the per-pixel training range
+  panel_windows: 4          # test windows whose reconstructions are stored
+
+outputs:
+  root: outputs/meeting_2026-10-14
