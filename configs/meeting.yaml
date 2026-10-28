@@ -62,5 +62,12 @@ meeting:
   clip_pod: true            # clip gappy POD to the per-pixel training range
   panel_windows: 4          # test windows whose reconstructions are stored
 
+random_readings:          # eval-only: faulty probes emit garbage instead of dropping out
+  p: 0.3                    # reuse the cached test_mask[p] fault sets (must be in meeting.test_ps)
+  mean: 0.5                 # garbage ~ N(mean, std) per channel per lag, scaled [0, 1] input space
+  std: 0.5
+  # Models trained on silent random-reading faults (train_random_readings):
+  train_methods: [SHRED-garbage, RobustSHREDv1-garbage, RobustSHREDv2-garbage]
+
 outputs:
   root: outputs/meeting_2026-10-14

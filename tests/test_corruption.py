@@ -72,3 +72,21 @@ class CorruptionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_garbage_augmenter_replaces_failed_sensors_and_appends_zero_flags() -> None:
+    import torch
+
+    from get_shredded.corruption import make_garbage_augmenter
+
+    torch.manual_seed(0)
+    x = torch.full((256, 3, 8), 0.25)
+    aug = make_garbage_augmenter(np.zeros(8, dtype=np.float32), 0.3, 4, channels=2, append_zero_flags=True)
+    out = aug(x)
+    assert out.shape == (256, 3, 12)
+    assert torch.all(out[..., 8:] == 0)
+    changed = (out[..., :8] != 0.25).all(dim=1)  # failed columns differ at every lag
+    untouched = (out[..., :8] == 0.25).all(dim=1)
+    assert torch.all(changed | untouched)
+    assert torch.equal(changed[:, :4], changed[:, 4:])  # both channels of a probe fail together
+    assert 0.2 < changed[:, :4].float().mean() < 0.4

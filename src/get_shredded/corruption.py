@@ -20,6 +20,7 @@ __all__ = [
     "noise_std_from_training",
     "corrupt_numpy",
     "make_corruption_augmenter",
+    "make_garbage_augmenter",
     "split_masked_input",
 ]
 
@@ -113,6 +114,38 @@ def make_corruption_augmenter(
             if out.ndim == 3:
                 flags = flags.unsqueeze(1).expand(-1, out.shape[1], -1)
             out = torch.cat([out, flags], dim=-1)
+        return out
+
+    return _augment
+
+
+def make_garbage_augmenter(
+    noise_std: np.ndarray | Tensor,
+    p: float,
+    num_sensors: int,
+    *,
+    channels: int = 1,
+    mean: float = 0.5,
+    std: float = 0.5,
+    append_zero_flags: bool = False,
+) -> Callable[[Tensor], Tensor]:
+    """Like :func:`make_corruption_augmenter`, but failed sensors emit fresh
+    N(mean, std) garbage at every lag instead of a fill value, and the failure
+    is silent: with ``append_zero_flags`` an all-zero mask is appended."""
+    std_noise = torch.as_tensor(np.asarray(noise_std), dtype=torch.float32)
+    if std_noise.numel() != channels * num_sensors:
+        raise ValueError(f"noise_std must have {channels * num_sensors} entries, got {std_noise.numel()}")
+
+    def _augment(x: Tensor) -> Tensor:
+        out = x + torch.randn_like(x) * std_noise.to(x.device)
+        mask = sample_dropout_mask_torch(x.shape[0], num_sensors, p, device=x.device)
+        full = expand_mask(mask, channels)
+        if out.ndim == 3:
+            full = full.unsqueeze(1)
+        out = torch.where(full, mean + std * torch.randn_like(out), out)
+        if append_zero_flags:
+            shape = (*out.shape[:-1], num_sensors)
+            out = torch.cat([out, torch.zeros(shape, dtype=out.dtype, device=out.device)], dim=-1)
         return out
 
     return _augment
