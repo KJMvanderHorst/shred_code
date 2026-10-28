@@ -1,0 +1,10 @@
+kind: robust_v1
+mask_input: true
+hidden_size: 64
+num_heads: 4
+embed_dim: 32
+num_frequencies: 8
+l1: 350
+l2: 400
+dropout: 0.0
+null_token: true            # learned never-masked token in masked attention

@@ -1,0 +1,5 @@
+kind: sdn
+mask_input: false
+l1: 350
+l2: 400
+dropout: 0.0

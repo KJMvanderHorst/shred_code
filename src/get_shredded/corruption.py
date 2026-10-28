@@ -1,12 +1,22 @@
-"""Per-sample sensor corruption: additive Gaussian noise plus sensor dropout.
+"""Per-sample sensor corruption: additive Gaussian noise plus probe faults.
 
 Sensor arrays use the layout (batch, [lags,] channels * num_sensors) with the
 channel blocks concatenated, e.g. [u_1..u_N, v_1..v_N] for (u, v) probes. A
-dropout mask has shape (batch, num_sensors), True = missing; a failed sensor
-loses every channel and stays failed for the whole lag window.
+fault mask has shape (batch, num_sensors), True = faulty; a faulty probe is
+faulty in every channel for the whole lag window.
+
+Faults (``CorruptionSpec.fault``):
+- ``none``: noise only.
+- ``missing``: faulty probes read ``fill`` (scaled input space).
+- ``garbage``: faulty probes read fresh N(garbage_mean, garbage_std) values at
+  every lag (scaled input space).
+
+Flags (``CorruptionSpec.flags``), for models that take a mask input:
+``oracle`` appends the true fault mask, ``silent`` appends an all-zero mask.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
@@ -14,15 +24,37 @@ import torch
 from torch import Tensor
 
 __all__ = [
+    "CorruptionSpec",
     "sample_dropout_mask",
     "sample_dropout_mask_torch",
     "expand_mask",
     "noise_std_from_training",
-    "corrupt_numpy",
-    "make_corruption_augmenter",
-    "make_garbage_augmenter",
+    "apply_fault",
+    "make_augmenter",
     "split_masked_input",
 ]
+
+FAULTS = ("none", "missing", "garbage")
+FLAGS = ("oracle", "silent")
+
+
+@dataclass(frozen=True)
+class CorruptionSpec:
+    noise: bool = True
+    fault: str = "none"
+    flags: str = "oracle"
+    p: float = 0.0
+    fill: float = 0.0
+    garbage_mean: float = 0.5
+    garbage_std: float = 0.5
+
+    def __post_init__(self) -> None:
+        if self.fault not in FAULTS:
+            raise ValueError(f"fault must be one of {FAULTS}, got {self.fault!r}")
+        if self.flags not in FLAGS:
+            raise ValueError(f"flags must be one of {FLAGS}, got {self.flags!r}")
+        if self.fault == "none" and self.p > 0:
+            raise ValueError("fault 'none' requires p = 0")
 
 
 def sample_dropout_mask(
@@ -69,48 +101,52 @@ def noise_std_from_training(train_values: np.ndarray, frac: float = 0.05) -> np.
     return (frac * np.asarray(train_values, dtype=np.float64).std(axis=0)).astype(np.float32)
 
 
-def corrupt_numpy(
-    x: np.ndarray, noise: np.ndarray | None, mask: np.ndarray | None, channels: int, fill: float = 0.0
+def apply_fault(
+    x: np.ndarray, mask: np.ndarray | None, channels: int, spec: CorruptionSpec, rng: np.random.Generator | None = None
 ) -> np.ndarray:
-    """Add a given noise realisation and fill failed sensors. x: (B, [lags,] C*N)."""
-    out = np.array(x, copy=True)
-    if noise is not None:
-        out = out + noise.astype(out.dtype, copy=False)
-    if mask is not None:
-        full = expand_mask(mask, channels)
-        if out.ndim == 3:
-            full = full[:, None, :]
-        out = np.where(full, np.asarray(fill, dtype=out.dtype), out)
-    return out
+    """Replace the faulty probes of x (B, [lags,] C*N) according to ``spec.fault``. Returns a new array."""
+    if mask is None or spec.fault == "none":
+        return np.array(x, copy=True)
+    full = expand_mask(mask, channels)
+    if x.ndim == 3:
+        full = full[:, None, :]
+    if spec.fault == "missing":
+        replacement = np.asarray(spec.fill, dtype=x.dtype)
+    else:
+        replacement = (spec.garbage_mean + spec.garbage_std * rng.standard_normal(x.shape)).astype(x.dtype)
+    return np.where(full, replacement, x)
 
 
-def make_corruption_augmenter(
+def make_augmenter(
+    spec: CorruptionSpec,
     noise_std: np.ndarray | Tensor,
-    p: float,
     num_sensors: int,
     *,
     channels: int = 1,
-    append_mask: bool = False,
-    fill: float = 0.0,
+    mask_input: bool = False,
 ) -> Callable[[Tensor], Tensor]:
-    """Per-batch training augmenter: fresh noise and a fresh per-sample mask on
-    every call (so masks are resampled every epoch). Failed sensors are
-    filled with ``fill`` in the model's input space. With ``append_mask`` the
-    float mask (B, [lags,] N) is concatenated on the last axis so masked
-    models can read it via :func:`split_masked_input`."""
+    """Per-batch training augmenter: fresh noise and a fresh per-sample fault mask on
+    every call (so masks are resampled every epoch). With ``mask_input`` the float
+    mask (B, [lags,] N) is concatenated on the last axis (all zero if ``spec.flags``
+    is ``silent``) so masked models can read it via :func:`split_masked_input`."""
     std = torch.as_tensor(np.asarray(noise_std), dtype=torch.float32)
     if std.numel() != channels * num_sensors:
         raise ValueError(f"noise_std must have {channels * num_sensors} entries, got {std.numel()}")
+    if not spec.noise:
+        std = torch.zeros_like(std)
 
     def _augment(x: Tensor) -> Tensor:
         out = x + torch.randn_like(x) * std.to(x.device)
-        mask = sample_dropout_mask_torch(x.shape[0], num_sensors, p, device=x.device)
+        mask = sample_dropout_mask_torch(x.shape[0], num_sensors, spec.p, device=x.device)
         full = expand_mask(mask, channels)
         if out.ndim == 3:
             full = full.unsqueeze(1)
-        out = out.masked_fill(full, fill)
-        if append_mask:
-            flags = mask.to(out.dtype)
+        if spec.fault == "missing":
+            out = out.masked_fill(full, spec.fill)
+        elif spec.fault == "garbage":
+            out = torch.where(full, spec.garbage_mean + spec.garbage_std * torch.randn_like(out), out)
+        if mask_input:
+            flags = mask.to(out.dtype) if spec.flags == "oracle" else torch.zeros_like(mask, dtype=out.dtype)
             if out.ndim == 3:
                 flags = flags.unsqueeze(1).expand(-1, out.shape[1], -1)
             out = torch.cat([out, flags], dim=-1)
@@ -119,40 +155,8 @@ def make_corruption_augmenter(
     return _augment
 
 
-def make_garbage_augmenter(
-    noise_std: np.ndarray | Tensor,
-    p: float,
-    num_sensors: int,
-    *,
-    channels: int = 1,
-    mean: float = 0.5,
-    std: float = 0.5,
-    append_zero_flags: bool = False,
-) -> Callable[[Tensor], Tensor]:
-    """Like :func:`make_corruption_augmenter`, but failed sensors emit fresh
-    N(mean, std) garbage at every lag instead of a fill value, and the failure
-    is silent: with ``append_zero_flags`` an all-zero mask is appended."""
-    std_noise = torch.as_tensor(np.asarray(noise_std), dtype=torch.float32)
-    if std_noise.numel() != channels * num_sensors:
-        raise ValueError(f"noise_std must have {channels * num_sensors} entries, got {std_noise.numel()}")
-
-    def _augment(x: Tensor) -> Tensor:
-        out = x + torch.randn_like(x) * std_noise.to(x.device)
-        mask = sample_dropout_mask_torch(x.shape[0], num_sensors, p, device=x.device)
-        full = expand_mask(mask, channels)
-        if out.ndim == 3:
-            full = full.unsqueeze(1)
-        out = torch.where(full, mean + std * torch.randn_like(out), out)
-        if append_zero_flags:
-            shape = (*out.shape[:-1], num_sensors)
-            out = torch.cat([out, torch.zeros(shape, dtype=out.dtype, device=out.device)], dim=-1)
-        return out
-
-    return _augment
-
-
 def split_masked_input(x: Tensor, num_values: int) -> tuple[Tensor, Tensor]:
-    """Inverse of ``append_mask``: returns (values, bool mask of shape (B, N))."""
+    """Inverse of the mask appended by :func:`make_augmenter`: returns (values, bool mask of shape (B, N))."""
     values = x[..., :num_values]
     flags = x[..., num_values:]
     if flags.ndim == 3:

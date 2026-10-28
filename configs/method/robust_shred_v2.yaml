@@ -1,0 +1,12 @@
+kind: robust_v2
+mask_input: true
+num_latents: 8
+latent_dim: 32
+num_frequencies: 8
+num_heads: 4
+hidden_size: 64
+hidden_layers: 2
+l1: 350
+l2: 400
+dropout: 0.0
+null_token: true

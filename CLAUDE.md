@@ -2,93 +2,58 @@
 
 ## Project
 
-This repository reimplements SHRED and compares it with SDN,
-Senseiver/SenseiverSDN, RobustSHRED variants, and QR/POD on the
-cylinder-vortex dataset.
+Research code for one question: how does sparse-sensor reconstruction degrade
+under sensor faults, and which methods make it robust? Probes on the Nektar
+cylinder wake (u, v) go missing or emit garbage, flagged (oracle) or
+undetected (silent). Methods: SHRED, SDN, RobustSHRED v1/v2, gappy POD;
+SenseiverSDN is expensive and opt-in (final experiments only). The synthetic
+1D wave is only for quick checks that a new method or fault runs at all.
 
-Stack: Python >= 3.10, uv, Hydra, NumPy, SciPy, PyTorch, scikit-learn,
-matplotlib, tqdm.
+All results so far are tentative. See README.md for layout and
+`docs/protocol.md` for every protocol choice.
 
-The project is a scientific research codebase. Preserve experimental
-semantics and reproducibility unless the task explicitly requests a
-scientific/protocol change.
+Stack: Python >= 3.10, uv, Hydra, NumPy, SciPy, PyTorch, scikit-learn, matplotlib.
 
-## Before changing code
+## Protocol
 
-- Read the relevant README and configuration before modifying experiment code.
-- Identify the smallest set of files required for the requested change.
-- Do not modify experimental defaults merely to make an experiment faster.
-- Do not change seeds, train/validation/test splits, model architecture,
-  evaluation metrics, or experiment protocol unless explicitly requested.
+- Preserve experimental semantics and reproducibility.
+- Do not change seeds, splits, placement, architectures, metrics, defaults or
+  any row of `docs/protocol.md` unless the user asks. When a choice is unclear,
+  ask instead of assuming.
+- A protocol change updates `docs/protocol.md` in the same PR.
+- Do not change defaults just to make a run faster.
 
-## Experiment execution
+## Workflow: idea to PR
 
-Treat agent context/output as scarce.
+1. Branch: `exp/<name>` (an experiment), `feat/<name>` (a core change) or `fix/<name>`.
+2. Experiment: add `configs/experiment/<name>.yaml` (explicit `runs` and
+   `eval.conditions`) and `experiments/<name>/README.md` from `_template`.
+3. Core change: small, in the existing modules, with a test.
+4. Check, in order: `uv run pytest`; a wave smoke run for a new method or fault
+   (`data=wave train.epochs=20 'eval.seeds=[0]'`); a Nektar smoke run
+   (`train.epochs=20 'eval.seeds=[0]'`); then the full run, only when the user
+   asks for it.
+5. Fill in the README results from `summary.json`, open a PR into main.
 
-- Do not stream epoch-by-epoch training output during automated experiments.
-- Use the repository's quiet/summary execution mode for sweeps.
-- Do not use verbose/tqdm training output unless debugging is explicitly required.
-- Prefer one batched experiment process over many separately supervised commands.
-- Do not repeatedly poll a running experiment.
-- Let long-running processes complete and inspect their compact result artifact.
-- Do not print large arrays, NPZ contents, tensors, tables, logs, or datasets.
-- Write detailed information to files instead of stdout.
+## Running experiments
 
-## Experiment scope
+Agent context is scarce.
 
-- Execute exactly the requested experiment.
-- Do not expand a sweep because a result appears interesting.
-- Do not add extra seeds, sensor counts, placements, architectures, or
-  robustness conditions unless explicitly requested.
-- Do not rerun a completed configuration unless the configuration changed
-  or the user explicitly requests a rerun.
-- Prefer resumable experiment execution.
+- `scripts/run.py` is the only entry point. It is quiet (one JSON line per
+  run) and resumable; never stream epoch output or add verbose logging to sweeps.
+- Run exactly the requested run set. Do not add seeds, sensor counts, methods
+  or conditions, and do not design follow-up experiments on your own.
+- Do not rerun a completed configuration unless its config changed or the user asks.
+- Launch once and let it finish; do not poll.
+- Read `outputs/<name>/<data>/summary.json` first; open per-run
+  `result.json` or `arrays.npz` only when needed. Never print arrays, logs
+  or datasets; report metrics and paths concisely.
+- No per-run plots during sweeps; aggregate plots via `get_shredded.plots`
+  in notebooks.
 
-## Results
+## Code
 
-Every completed experiment should have a compact machine-readable result
-artifact.
-
-When reviewing experiment results:
-
-1. Read the compact summary first.
-2. Inspect detailed files only when necessary.
-3. Do not load raw result arrays into the conversation unless requested.
-4. Report metrics and output paths concisely.
-
-## Visualizations
-
-- Do not generate per-run plots or GIFs during sweeps unless requested.
-- Prefer aggregate plots and tables.
-- Generate detailed visualizations only for selected runs.
-
-## Agent workflow
-
-For expensive experiments:
-
-1. Determine the exact requested run set.
-2. Verify the configuration.
-3. Execute the run set.
-4. Read the compact result summary.
-5. Report the results.
-6. Stop.
-
-Do not autonomously design follow-up experiments.
-
-## Code changes
-
-- Prefer small, localized changes.
-- Preserve existing Hydra configuration patterns; use Hydra for experiment
-  parameters rather than introducing parallel configuration mechanisms.
-- Preserve existing output formats unless the task requires a change.
-- Add tests for behavioral changes where practical.
-- Do not rewrite working scientific code merely for stylistic reasons.
-
-## Verification
-
-After code changes:
-
-- Run the smallest relevant test or smoke test first.
-- For experiment runners, verify the command/configuration before launching
-  expensive computation.
-- Do not run a full sweep merely to verify a small code change unless required.
+- Small, localized changes; keep the Hydra config pattern (no parallel config mechanisms).
+- Every experiment loop has an explicit, inspectable run set.
+- Keep output formats unless the task requires a change.
+- Do not rewrite working scientific code for style.

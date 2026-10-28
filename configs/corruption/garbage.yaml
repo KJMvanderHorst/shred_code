@@ -1,0 +1,6 @@
+noise: true
+fault: garbage
+flags: silent               # the fault is undetected: masked models get an all-zero mask
+p: 0.3
+garbage_mean: 0.5           # N(mean, std) per channel per lag, scaled input space
+garbage_std: 0.5
