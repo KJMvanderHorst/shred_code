@@ -33,7 +33,8 @@ All results so far are **tentative**: the protocol is still being settled.
 | Test draws | `eval.draws` | 10 noise and fault realisations per test window | Averages out the luck of one fault pattern | |
 | Fault types | `corruptions.*.fault` | `none`, `missing`, `garbage` | | `stuck` and `drift` are planned, not built (see below) |
 | Fault scope | — | A faulty probe is faulty in every channel, for the whole lag window | One physical probe fails, not one reading | |
-| Severity | `corruptions.*.p`, `eval.conditions[].ps` | Each probe faulty with probability p (train p = 0.3); draws where every probe fails are resampled | Simple, matches the training augmentation | Per-k errors are reported (`err_by_k`) but k varies within a condition. Exact-k evaluation is planned (PR C) |
+| Training severity | `corruptions.*.p` | Each probe faulty with probability p = 0.3; draws where every probe fails are resampled | A different fault pattern every batch | |
+| Evaluation severity | `eval.conditions[].ks` | Exactly k of N probes faulty, k = 0..N-1 (`ks: all`); a fresh uniformly random subset per test window and draw, shared by all methods | Error as a function of k, without mixing severities in one number | Never all N faulty. `ps` (per-probe p, as in training) is still available; `dropout_baseline` uses it |
 | Missing fill | `corruptions.missing.fill` | 0.0 in scaled input space | | 0 is the per-sensor training minimum, not "no signal" |
 | Garbage | `corruptions.garbage.garbage_*` | N(0.5, 0.5) per channel per lag, scaled input space | A broken probe emits plausible-range nonsense | |
 | Flags | `corruptions.*.flags`, `eval.conditions[].flags` | `oracle`: models with a mask input get the true fault mask. `silent`: they get an all-zero mask | Separates "fault known" from "fault undetected" | Models without a mask input (SHRED, SDN) behave the same under both. Gappy POD drops faulty rows under `oracle` and uses them under `silent` |

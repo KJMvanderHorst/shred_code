@@ -26,6 +26,7 @@ from torch import Tensor
 __all__ = [
     "CorruptionSpec",
     "sample_dropout_mask",
+    "sample_exact_k_mask",
     "sample_dropout_mask_torch",
     "expand_mask",
     "noise_std_from_training",
@@ -71,6 +72,13 @@ def sample_dropout_mask(
         mask[all_failed] = rng.random((int(all_failed.sum()), num_sensors)) < p
         all_failed = mask.all(axis=1)
     return mask
+
+
+def sample_exact_k_mask(num_samples: int, num_sensors: int, k: int, rng: np.random.Generator) -> np.ndarray:
+    """Exactly k failed sensors per row, a uniformly random subset per row."""
+    if not 0 <= k < num_sensors:
+        raise ValueError(f"k must be in [0, {num_sensors - 1}] so at least one sensor remains, got {k}")
+    return rng.random((num_samples, num_sensors)).argsort(axis=1).argsort(axis=1) < k
 
 
 def sample_dropout_mask_torch(

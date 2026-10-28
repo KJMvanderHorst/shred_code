@@ -10,6 +10,7 @@ from get_shredded.corruption import (
     make_augmenter,
     noise_std_from_training,
     sample_dropout_mask,
+    sample_exact_k_mask,
     sample_dropout_mask_torch,
     split_masked_input,
 )
@@ -109,3 +110,15 @@ def test_garbage_augmenter_is_silent_and_fails_whole_probes() -> None:
 def test_spec_rejects_invalid_settings(kwargs) -> None:
     with pytest.raises(ValueError):
         CorruptionSpec(**kwargs)
+
+
+def test_exact_k_mask_has_k_faults_in_uniform_random_positions() -> None:
+    mask = sample_exact_k_mask(20000, 8, 3, np.random.default_rng(0))
+    assert mask.dtype == bool and (mask.sum(axis=1) == 3).all()
+    np.testing.assert_allclose(mask.mean(axis=0), 3 / 8, atol=0.02)  # every probe equally likely
+    assert len({row.tobytes() for row in mask}) == 56  # all C(8, 3) subsets occur
+    np.testing.assert_array_equal(mask, sample_exact_k_mask(20000, 8, 3, np.random.default_rng(0)))
+    assert not sample_exact_k_mask(5, 8, 0, np.random.default_rng(0)).any()
+    for k in (-1, 8):
+        with pytest.raises(ValueError):
+            sample_exact_k_mask(5, 8, k, np.random.default_rng(0))

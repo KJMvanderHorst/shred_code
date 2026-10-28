@@ -5,4 +5,4 @@ runs:
   - {method: shred, train: missing}
 eval:
   conditions:
-    - {corruption: missing, flags: oracle, ps: [0.0, 0.3]}
+    - {corruption: missing, flags: oracle, ks: all}

@@ -1,6 +1,6 @@
 """Aggregate plots and tables over runner caches (``runner.output_root(cfg)``).
 
-Runs are named ``<method>__<train corruption>``; conditions ``<fault>_<flags>_p<p>``.
+Runs are named ``<method>__<train corruption>``; conditions ``<fault>_<flags>_p<p>`` or ``<fault>_<flags>_k<k>``.
 """
 from __future__ import annotations
 
@@ -34,9 +34,9 @@ def method_color(run: str) -> str:
 
 
 def condition_label(cond: str) -> str:
-    """'missing_oracle_p0.3' -> 'missing (oracle), p = 0.3'."""
-    fault, flags, p = cond.rsplit("_", 2)
-    return f"{fault} ({flags}), p = {p[1:]}"
+    """'missing_oracle_p0.3' -> 'missing (oracle), p = 0.3'; '..._k2' -> '..., k = 2'."""
+    fault, flags, severity = cond.rsplit("_", 2)
+    return f"{fault} ({flags}), {severity[0]} = {severity[1:]}"
 
 plt.rcParams.update({
     "axes.spines.top": False, "axes.spines.right": False, "axes.edgecolor": "#bdbcb6",
@@ -240,7 +240,7 @@ def plot_latent_scatter(root, results: dict, methods: list[str], cond: str = BAS
         ax.set_title(f"{m}\nPearson {c['pearson']:.2f} · Spearman {c['spearman']:.2f}", loc="left", fontsize=9)
         ax.set_xlabel("D_latent")
     axes.ravel()[0].set_ylabel("D_recon")
-    if not cond.endswith("_p0"):
+    if not cond.endswith(("_p0", "_k0")):
         fig.colorbar(sc, ax=axes, shrink=0.8, label="failed sensors k")
     fig.suptitle(f"Latent vs reconstruction change, {condition_label(cond)}", x=0.01, ha="left")
     return fig

@@ -12,5 +12,5 @@ runs:
   - {method: robust_shred_v2, train: missing}
   - {method: gappy_pod, train: clean}
 eval:
-  conditions:
+  conditions:               # per-probe p, as in the meeting (not exact k)
     - {corruption: missing, flags: oracle, ps: [0.0, 0.3]}
