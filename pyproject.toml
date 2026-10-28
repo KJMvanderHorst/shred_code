@@ -33,4 +33,8 @@ where = ["src"]
 dev = [
     "ipykernel>=7.3.0",
     "ipympl>=0.10.0",
+    "nbconvert>=7.17.2",
+    "nbformat>=5.11.1",
+    "pandas>=2.3.3",
+    "pytest>=9.1.1",
 ]

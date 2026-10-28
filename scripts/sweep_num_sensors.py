@@ -38,7 +38,9 @@ def main(cfg: DictConfig) -> None:
     seeds = list(cfg.sweep.seeds)
     placements = list(cfg.sweep.placements)
     data_source = str(cfg.data.source).lower()
-    dataset_path = Path(to_absolute_path(cfg.data.wave_file if data_source == "wave" else cfg.data.mat))
+    dataset_file = {"wave": cfg.data.get("wave_file"), "nektar": cfg.data.get("nektar_file")}.get(data_source, cfg.data.mat)
+    dataset_path = Path(to_absolute_path(dataset_file))
+    nektar_field = str(cfg.data.get("nektar_field", "vorticity")).lower()
     out_dir = Path(to_absolute_path(cfg.outputs.root)) / "sweep"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -73,6 +75,9 @@ def main(cfg: DictConfig) -> None:
                     "noise_enabled": bool(cfg.noise.enabled),
                     "noise_modes": [str(mode) for mode in cfg.noise.modes],
                 }
+                if data_source == "nektar":
+                    # Only nektar runs carry these keys so existing cylinder/wave config_ids are unchanged.
+                    config.update({"data_source": data_source, "nektar_field": nektar_field})
                 config_id = _stable_config_fingerprint(config)
                 run_dir = out_dir / f"n_{n_s}_{placement}_seed_{seed}"
                 result_path = run_dir / "result.json"
@@ -91,11 +96,13 @@ def main(cfg: DictConfig) -> None:
                         data_source=data_source,
                         data_path=dataset_path,
                         trajectory_index=int(cfg.data.get("trajectory_index", 0)),
+                        nektar_field=nektar_field,
                         num_sensors=int(n_s),
                         lags=int(cfg.model.lags),
                         placement=str(placement),
-                        test_size=int(cfg.data.test_size),
-                        val_size=int(cfg.data.val_size),
+                        train_percentage=float(cfg.data.train_percentage),
+                        val_percentage=float(cfg.data.val_percentage),
+                        test_percentage=float(cfg.data.test_percentage),
                         hidden_size=int(cfg.model.hidden_size),
                         hidden_layers=int(cfg.model.hidden_layers),
                         l1=int(cfg.model.l1),

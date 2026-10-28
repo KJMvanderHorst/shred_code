@@ -81,17 +81,19 @@ class SHRED(nn.Module):
         self.hidden_size = hidden_size
         self.recurrent_cell = cell_type
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def latent(self, x: torch.Tensor) -> torch.Tensor:
+        """Final hidden state of the last recurrent layer, (batch, hidden_size)."""
         device = next(self.parameters()).device
         h_0 = torch.zeros(self.hidden_layers, x.size(0), self.hidden_size, device=device)
         if self.recurrent_cell == "gru":
             _, h_out = self.rnn(x, h_0)
-            h_out = h_out[-1].view(-1, self.hidden_size)
         else:
             c_0 = torch.zeros(self.hidden_layers, x.size(0), self.hidden_size, device=device)
             _, (h_out, _) = self.rnn(x, (h_0, c_0))
-            h_out = h_out[-1].view(-1, self.hidden_size)
+        return h_out[-1].view(-1, self.hidden_size)
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h_out = self.latent(x)
         out = torch.relu(self.dropout(self.linear1(h_out)))
         out = torch.relu(self.dropout(self.linear2(out)))
         return self.linear3(out)
