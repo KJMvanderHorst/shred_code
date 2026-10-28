@@ -33,7 +33,9 @@ Stack: Python >= 3.10, uv, Hydra, NumPy, SciPy, PyTorch, scikit-learn, matplotli
    (`data=wave train.epochs=20 'eval.seeds=[0]'`); a Nektar smoke run
    (`train.epochs=20 'eval.seeds=[0]'`); then the full run, only when the user
    asks for it.
-5. Fill in the README results from `summary.json`, open a PR into main.
+5. Fill in the README results from `summary.json`.
+6. Add an entry to `experiments/LOG.md` (every PR, features and fixes too), then
+   open a PR into main.
 
 ## Running experiments
 

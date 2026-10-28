@@ -1,6 +1,7 @@
 # <name>
 
 **Status:** planned | running | tentative | settled
+**Code:** branch `exp/<name>`, PR #<n> (merge commit `<sha>` once merged)
 
 ## Question
 
