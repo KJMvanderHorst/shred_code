@@ -1,6 +1,7 @@
 # dropout_baseline
 
 **Status:** tentative
+**Code:** `meeting_runner.py` (PR #7, tag `pre-restructure`); reproduced by `runner.py` (PR #8)
 
 ## Question
 

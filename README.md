@@ -38,6 +38,7 @@ configs/data/             nektar_uv, wave
 configs/method/           one file per method with its hyperparameters
 configs/corruption/       clean, noise, missing, garbage
 configs/experiment/       one file per experiment: its runs and conditions
+experiments/LOG.md        lab notebook: every experiment and feature, newest first
 experiments/<name>/       README per experiment: question, run set, results
 docs/protocol.md          every protocol choice, its default and caveats
 scripts/run.py            the only entry point
