@@ -1,0 +1,6 @@
+name: nektar_uv
+source: nektar
+file: data/cylinder_nektar_wake.mat
+field: uv                   # state = [u; v]; each probe reads both channels
+split: [80, 10, 10]         # train / validation / test %, interleaved windows
+lags: 10

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "get-shredded"
 version = "0.1.0"
-description = "Minimal SHRED baseline for cylinder-vortex data"
+description = "Sparse-sensor reconstruction (SHRED and variants) under sensor faults"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -19,8 +19,6 @@ dependencies = [
   "pillow>=10.0",
   "tqdm>=4.66",
   "ipywidgets>=8.1.9",
-  "huggingface-hub>=2.0.0",
-  "h5py>=3.16.0",
 ]
 
 [tool.setuptools]

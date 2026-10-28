@@ -9,17 +9,38 @@ from scipy.io import loadmat
 from .wave_data import load_wave_data
 
 
-def load_cylinder_data(mat_path: str | Path) -> tuple[np.ndarray, int, int]:
-    """Returns (load_X, nx, ny) where load_X has shape (N, m): N temporal
-    snapshots of an m-dimensional state — the convention used in the paper."""
-    data = loadmat(str(mat_path))
-    if "VORTALL" not in data:
-        raise KeyError("Expected key 'VORTALL' in .mat file")
-    vortall = np.asarray(data["VORTALL"], dtype=np.float32)
-    load_X = vortall.T
-    nx = int(data.get("nx", [[0]])[0][0])
-    ny = int(data.get("ny", [[0]])[0][0])
-    return load_X, nx, ny
+def split_window_indices(
+    n_windows: int,
+    *,
+    train_percentage: float,
+    val_percentage: float,
+    test_percentage: float,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return reproducible interleaved train, validation, and test indices."""
+    percentages = np.asarray([train_percentage, val_percentage, test_percentage], dtype=float)
+    if np.any(percentages <= 0) or not np.isclose(percentages.sum(), 100.0):
+        raise ValueError("train, validation, and test percentages must be positive and sum to 100")
+    if n_windows < 3:
+        raise ValueError(f"at least 3 windows are required, got {n_windows}")
+
+    counts = np.floor(n_windows * percentages / 100.0).astype(int)
+    remainder = n_windows - int(counts.sum())
+    for index in np.argsort(-(n_windows * percentages / 100.0 - counts))[:remainder]:
+        counts[index] += 1
+    if np.any(counts == 0):
+        raise ValueError(
+            "percentages must produce at least one window per split "
+            f"(n_windows={n_windows}, percentages={percentages.tolist()})"
+        )
+
+    permutation = np.random.default_rng(seed).permutation(n_windows)
+    train_end = counts[0]
+    val_end = train_end + counts[1]
+    train_indices = np.sort(permutation[:train_end])
+    valid_indices = np.sort(permutation[train_end:val_end])
+    test_indices = np.sort(permutation[val_end:])
+    return train_indices, valid_indices, test_indices
 
 
 NEKTAR_FIELDS = ("vorticity", "u", "v", "uv", "p")
@@ -104,23 +125,14 @@ def load_dataset(
     trajectory_index: int = 0,
     nektar_field: str = "vorticity",
 ) -> tuple[np.ndarray, int, int]:
-    """Load a raw dataset and return a training-ready (N_time, N_state) matrix.
-
-    Supported sources are the cylinder-vortex `.mat` dataset, the Nektar
-    cylinder-wake `.mat` dataset and the synthetic 1D wave `.npz` prototype. The downstream model code stays neutral to the
-    dataset origin as long as the raw state matrix follows the repo contract.
-    """
+    """Load a raw dataset as an (N_time, N_state) matrix: the Nektar cylinder wake
+    (``nektar``) or one trajectory of the synthetic 1D wave (``wave``)."""
     source = str(data_source).lower()
-    if source in {"cylinder", "cylinder_data", "mat", "cylinder_mat"}:
-        return load_cylinder_data(data_path)
     if source == "nektar":
         return load_nektar_data(data_path, field=nektar_field)
-    if source in {"wave", "wave_1d", "synthetic_wave", "synthetic"}:
+    if source == "wave":
         return load_wave_data(data_path, trajectory_index=trajectory_index)
-    raise ValueError(
-        f"Unsupported data_source='{data_source}'. Expected one of: "
-        "cylinder, nektar, wave."
-    )
+    raise ValueError(f"Unsupported data_source='{data_source}'. Expected one of: nektar, wave.")
 
 
 def qr_place(data_matrix: np.ndarray, num_sensors: int) -> tuple[np.ndarray, np.ndarray]:

@@ -1,0 +1,50 @@
+# Entry config for scripts/run.py. Pick an experiment with +experiment=<name>:
+#   uv run python scripts/run.py +experiment=dropout_baseline
+#   uv run python scripts/run.py +experiment=dropout_baseline data=wave train.epochs=20 eval.seeds=[0]
+# Protocol choices and their rationale: docs/protocol.md.
+defaults:
+  - data: nektar_uv
+  # Every method and corruption is loaded under a name; experiments refer to them in `runs`.
+  - method@methods.shred: shred
+  - method@methods.shred_mask: shred_mask
+  - method@methods.sdn: sdn
+  - method@methods.robust_shred_v1: robust_shred_v1
+  - method@methods.robust_shred_v2: robust_shred_v2
+  - method@methods.senseiver_sdn: senseiver_sdn
+  - method@methods.gappy_pod: gappy_pod
+  - corruption@corruptions.clean: clean
+  - corruption@corruptions.noise: noise
+  - corruption@corruptions.missing: missing
+  - corruption@corruptions.garbage: garbage
+  - override hydra/job_logging: disabled
+  - override hydra/hydra_logging: disabled
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+name: scratch               # experiment name; outputs go to <outputs_root>/<name>/<data.name>/
+outputs_root: outputs
+verbose: false              # true: raise on the first failed run instead of recording it
+
+sensors:
+  num: 8
+  rank: 16                  # POD rank for block-QR placement and gappy POD (2 x num)
+noise_frac: 0.05            # sigma = noise_frac x per-channel training std (unscaled)
+
+train:
+  epochs: 1000
+  batch_size: 64
+  lr: 1.0e-3
+  patience: 5
+
+eval:
+  seeds: [0, 1, 2]
+  draws: 10                 # fixed noise/fault realisations per test window
+  panel_windows: 4          # test windows whose reconstructions are stored
+  conditions:               # corruption (a key of `corruptions`) x flags x every p
+    - {corruption: missing, flags: oracle, ps: [0.0, 0.3]}
+
+runs: []                    # [{method: <key of methods>, train: <key of corruptions>}, ...]

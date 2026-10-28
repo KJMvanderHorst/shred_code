@@ -4,7 +4,9 @@ __pycache__/
 .DS_Store
 *.pt
 *.pth
-# outputs/
+# Results live in experiments/<name>/README.md; raw outputs stay local
+outputs/
+notebooks/scratch/
 .hydra/
 
 #data

@@ -1,0 +1,16 @@
+# @package _global_
+# The 2026-10-14 meeting experiment (noise + dropout robustness), re-expressed.
+# Reproduction target for the restructure; record: experiments/dropout_baseline/README.md
+name: dropout_baseline
+runs:
+  - {method: shred, train: noise}
+  - {method: shred, train: missing}
+  - {method: sdn, train: noise}
+  - {method: sdn, train: missing}
+  - {method: senseiver_sdn, train: missing}
+  - {method: robust_shred_v1, train: missing}
+  - {method: robust_shred_v2, train: missing}
+  - {method: gappy_pod, train: clean}
+eval:
+  conditions:
+    - {corruption: missing, flags: oracle, ps: [0.0, 0.3]}

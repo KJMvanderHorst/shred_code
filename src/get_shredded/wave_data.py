@@ -127,3 +127,9 @@ def load_wave_data(npz_path: str | Path, *, trajectory_index: int = 0) -> tuple[
             )
         selected = field[trajectory_index].astype(np.float32, copy=False)
     return selected, 1, selected.shape[1]
+
+
+def wave_point_coordinates(npz_path: str | Path) -> np.ndarray:
+    """Physical x of each grid point, shape (Nx, 1), in the state order of :func:`load_wave_data`."""
+    with np.load(Path(npz_path)) as data:
+        return np.asarray(data["x"], dtype=np.float64)[:, None]

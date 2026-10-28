@@ -1,0 +1,4 @@
+# Untrained: least squares on the leading sensors.rank POD modes; the run's train corruption is ignored.
+kind: pod
+mask_input: false
+clip: true                  # clip to the per-pixel training range

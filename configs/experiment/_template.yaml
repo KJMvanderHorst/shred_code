@@ -1,0 +1,8 @@
+# @package _global_
+# Copy to <name>.yaml, set name, runs and conditions, and write experiments/<name>/README.md.
+name: template
+runs:
+  - {method: shred, train: missing}
+eval:
+  conditions:
+    - {corruption: missing, flags: oracle, ps: [0.0, 0.3]}

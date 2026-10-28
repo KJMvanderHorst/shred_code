@@ -1,0 +1,11 @@
+# Expensive: opt-in, final experiments only.
+kind: senseiver_sdn
+mask_input: true
+num_latents: 8
+latent_dim: 32
+num_frequencies: 8
+num_heads: 4
+l1: 350
+l2: 400
+dropout: 0.0
+null_token: true

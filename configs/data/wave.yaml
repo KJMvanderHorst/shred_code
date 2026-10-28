@@ -1,0 +1,7 @@
+# Synthetic 1D wave: quick checks that a method or fault runs at all. Not compared with Nektar results.
+name: wave
+source: wave
+file: data/wave_1d.npz
+trajectory_index: 0
+split: [80, 10, 10]
+lags: 10

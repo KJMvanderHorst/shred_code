@@ -1,0 +1,4 @@
+# SHRED fed [faulty readings, 0/1 fault flags].
+defaults:
+  - shred
+mask_input: true
