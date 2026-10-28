@@ -44,7 +44,9 @@ eval:
   seeds: [0, 1, 2]
   draws: 10                 # fixed noise/fault realisations per test window
   panel_windows: 4          # test windows whose reconstructions are stored
-  conditions:               # corruption (a key of `corruptions`) x flags x every p
-    - {corruption: missing, flags: oracle, ps: [0.0, 0.3]}
+  # corruption (a key of `corruptions`) x flags x severity: `ks` = exactly k probes faulty
+  # (`all` = 0..N-1), or `ps` = each probe faulty with probability p
+  conditions:
+    - {corruption: missing, flags: oracle, ks: all}
 
 runs: []                    # [{method: <key of methods>, train: <key of corruptions>}, ...]

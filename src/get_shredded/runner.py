@@ -41,6 +41,7 @@ from .corruption import (
     make_augmenter,
     noise_std_from_training,
     sample_dropout_mask,
+    sample_exact_k_mask,
     split_masked_input,
 )
 from .data import (
@@ -93,14 +94,29 @@ def corruption_spec(cfg, name: str, **overrides) -> CorruptionSpec:
     return CorruptionSpec(**{**OmegaConf.to_container(cfg.corruptions[name]), **overrides})
 
 
-def eval_conditions(cfg) -> dict[str, tuple[CorruptionSpec, float]]:
-    """{condition key: (spec, p)} for every corruption x flags x p in ``cfg.eval.conditions``."""
+def eval_conditions(cfg) -> dict[str, tuple[CorruptionSpec, str]]:
+    """{condition key: (spec, severity)} for every corruption x flags x severity in ``cfg.eval.conditions``.
+
+    A condition lists either ``ps`` (each probe faulty with probability p; severity ``p<p>``) or
+    ``ks`` (exactly k probes faulty; severity ``k<k>``; ``ks: all`` means 0..N-1).
+    """
     out = {}
     for cond in cfg.eval.conditions:
-        for p in cond.ps:
-            spec = corruption_spec(cfg, cond.corruption, flags=str(cond.flags), p=float(p))
-            out[f"{spec.fault}_{spec.flags}_p{float(p):g}"] = (spec, float(p))
+        if "ks" in cond:
+            ks = range(int(cfg.sensors.num)) if cond.ks == "all" else cond.ks
+            severities = [(f"k{int(k)}", 0.0) for k in ks]
+        else:
+            severities = [(f"p{float(p):g}", float(p)) for p in cond.ps]
+        for severity, p in severities:
+            spec = corruption_spec(cfg, cond.corruption, flags=str(cond.flags), p=p)
+            out[f"{spec.fault}_{spec.flags}_{severity}"] = (spec, severity)
     return out
+
+
+def _sample_test_mask(severity: str, num_samples: int, num_sensors: int, rng: np.random.Generator) -> np.ndarray:
+    if severity.startswith("k"):
+        return sample_exact_k_mask(num_samples, num_sensors, int(severity[1:]), rng)
+    return sample_dropout_mask(num_samples, num_sensors, float(severity[1:]), rng)
 
 
 # ---------------------------------------------------------------- result files
@@ -218,7 +234,7 @@ class SeedData:
     valid_noise: np.ndarray       # (V, lags, C*N) unscaled
     valid_rng_state: dict         # validation RNG state after valid_noise; fault masks continue from it
     test_noise: np.ndarray        # (D, T, lags, C*N) unscaled
-    test_mask: dict[float, np.ndarray]  # p -> (D, T, N)
+    test_mask: dict[str, np.ndarray]  # severity ('p0.3', 'k2') -> (D, T, N)
     truth: np.ndarray             # (T, m) unscaled test targets
 
     @property
@@ -269,9 +285,9 @@ def prepare_seed(cfg, seed: int) -> SeedData:
     rng_test = np.random.default_rng([seed, 2])
     test_noise = (rng_test.standard_normal((draws, len(test_idx), lags, len(state_indices))) * sigma).astype(np.float32)
     test_mask = {}
-    for _, p in eval_conditions(cfg).values():
-        if p not in test_mask:  # one mask set per p, shared by every fault and flags setting
-            test_mask[p] = sample_dropout_mask(draws * len(test_idx), num_sensors, p, rng_test).reshape(
+    for _, severity in eval_conditions(cfg).values():
+        if severity not in test_mask:  # one mask set per severity, shared by every fault and flags setting
+            test_mask[severity] = _sample_test_mask(severity, draws * len(test_idx), num_sensors, rng_test).reshape(
                 draws, len(test_idx), num_sensors
             )
     truth = load_X[test_idx + lags - 1]
@@ -392,8 +408,8 @@ def _evaluate(cfg, sd: SeedData, recon_fn, panel_windows: np.ndarray) -> tuple[d
     metrics["clean"] = {"err": _aggregate_rel_error(recon_clean, sd.truth)}
     arrays["clean_err"] = _per_snapshot_rel_error(recon_clean, sd.truth)
     noise = sd.test_noise.reshape(draws * n_test, *sd.test_noise.shape[2:])
-    for tag, (spec, p) in eval_conditions(cfg).items():
-        flat_mask = sd.test_mask[p].reshape(draws * n_test, -1)
+    for tag, (spec, severity) in eval_conditions(cfg).items():
+        flat_mask = sd.test_mask[severity].reshape(draws * n_test, -1)
         # Same seeded garbage for every method within a condition.
         recon, latent = recon_fn(noise, flat_mask, spec, np.random.default_rng([sd.seed, 3]))
         k = flat_mask.sum(axis=1)
@@ -505,7 +521,7 @@ def save_seed_info(sd: SeedData, out_dir: Path, panel_windows: int) -> None:
         locations=sd.locations, state_indices=sd.state_indices, sensor_coordinates=sd.sensor_coordinates,
         point_coordinates=sd.point_coordinates, nx=sd.nx, ny=sd.ny, n_points=sd.n_points, channels=sd.channels,
         sigma=sd.sigma, train_idx=sd.train_idx, valid_idx=sd.valid_idx, test_idx=sd.test_idx,
-        test_noise=sd.test_noise, **{f"test_mask_p{p:g}": mask for p, mask in sd.test_mask.items()},
+        test_noise=sd.test_noise, **{f"test_mask_{severity}": mask for severity, mask in sd.test_mask.items()},
         panel_truth=sd.truth[panel].astype(np.float32), panel_windows=panel,
     )
 
@@ -615,7 +631,7 @@ def build_summary(root: str | Path, runs: list[str], seeds: list[int]) -> dict[s
 def masked_invariance_check(cfg, run, seed: int) -> float:
     """Max |output change| of a trained masked model when faulty sensors' values are set to 1e3.
 
-    Uses draw 0 of the largest-p test mask with oracle flags. Should be ~0 (float rounding) for masked methods.
+    Uses draw 0 of the test mask with the most faults, with oracle flags. Should be ~0 (float rounding) for masked methods.
     """
     method = cfg.methods[run.method]
     if not method.mask_input or method.kind == "shred":
@@ -625,8 +641,8 @@ def masked_invariance_check(cfg, run, seed: int) -> float:
     path = output_root(cfg) / f"seed{seed}" / run_name(run) / "model.pt"
     model.load_state_dict(torch.load(path, map_location="cpu"))
     model.eval()
-    mask = sd.test_mask[max(sd.test_mask)][0]
-    spec = CorruptionSpec(fault="missing", p=max(sd.test_mask))
+    mask = max(sd.test_mask.values(), key=lambda m: m.sum())[0]
+    spec = CorruptionSpec(fault="missing")
     x = _format_inputs(sd, sd.windows[sd.test_idx], sd.test_noise[0], mask, spec, method)
     perturbed = x.copy()
     failed = expand_mask(mask, sd.channels)[:, None, :].repeat(sd.lags, axis=1)

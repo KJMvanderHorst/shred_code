@@ -12,7 +12,8 @@ RUNS = [
     ("senseiver_sdn", "missing"), ("robust_shred_v1", "missing"), ("robust_shred_v2", "garbage"),
     ("gappy_pod", "clean"),
 ]
-CONDITIONS = "[{corruption:missing,flags:oracle,ps:[0.0,0.3]},{corruption:garbage,flags:silent,ps:[0.3]}]"
+CONDITIONS = ("[{corruption:missing,flags:oracle,ps:[0.0,0.3]},{corruption:garbage,flags:silent,ps:[0.3]},"
+              "{corruption:missing,flags:oracle,ks:all}]")
 SMALL = ["data.lags=3", "train.epochs=2", "sensors.num=3", "sensors.rank=6", "eval.seeds=[0]",
          "eval.draws=2", "eval.panel_windows=2", "verbose=true"]
 
@@ -53,6 +54,8 @@ def test_run_all_writes_artifacts_and_skips_completed(tmp_path: Path, capsys) ->
             assert np.isfinite(metrics[cond]["err"])
         arrays = load_arrays(root, name, 0)
         assert arrays["missing_oracle_p0.3_err"].shape == (2 * 4,)  # draws x test windows
+        for k in range(3):  # ks: all with sensors.num=3
+            assert (arrays[f"missing_oracle_k{k}_k"] == k).all()
         assert ("missing_oracle_p0.3_d_latent" in arrays) == (method not in ("sdn", "gappy_pod"))
     summary = json.loads((root / "summary.json").read_text())
     assert summary["missing"] == []
