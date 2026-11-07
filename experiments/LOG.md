@@ -17,6 +17,18 @@ Conclusion: <what we take from it, or "not written">
 
 ---
 
+## 2026-11-07 · random_readings (rerun) · exp · PR #11 · tentative
+Rerun of the 2026-10-15 garbage experiment on `runner.py`, 3 seeds throughout (the garbage-trained models were seed 0 only), plus exactly-k evaluation. Faulty probes emit N(0.5, 0.5), flagged (oracle) or undetected (silent).
+Result (p = 0.3, mean over 3 seeds): every meeting number reproduces bit for bit except RobustSHREDv1/v2 (within seed std). Silent garbage: 0.11–0.23 for every dropout-trained method (SHRED+mask 0.108, SHRED-noise 0.119, RobustSHREDv2 0.138, v1 0.149, SHRED-dropout 0.151, gappy POD 0.235); with oracle flags the masked RobustSHREDs equal dropout (0.015). Trained on silent garbage: RobustSHREDv2 0.033 ± 0.003, SHRED 0.049 ± 0.007, RobustSHREDv1 0.074 ± 0.006 under silent garbage, at a clean cost of 0.016–0.032. Exact k, silent: dropout-trained models reach ≈ 0.04–0.11 already at k = 1; garbage-trained RobustSHREDv2 stays ≤ 0.04 up to k = 4.
+Conclusion: not written.
+→ experiments/random_readings/README.md, notebooks/random_readings.ipynb, outputs/random_readings/nektar_uv/ (local only)
+
+## 2026-11-07 · dropout_baseline (rerun) · exp · PR #11 · tentative
+Rerun of the meeting experiment on `runner.py`: `senseiver_sdn` dropped, `shred_mask__missing` added, exactly-k evaluation added. Adds `plots.plot_exact_k`.
+Result (p = 0.3, mean over 3 seeds): SHRED, SHRED+mask, SDN and gappy POD reproduce the meeting bit for bit; RobustSHREDv1/v2 move 0.0150 → 0.0146 and 0.0151 → 0.0143 (per-seed differences, within seed std; cause not identified, the restructure check covered 20 epochs). First exact-k run on Nektar: dropout-trained models stay ≈ 0.01–0.05 up to k = 5 of 8, then rise to 0.13–0.21 at k = 7; noise-trained SHRED/SDN reach ≈ 0.08–0.09 at k = 1; gappy POD ≈ 0.07 at k = 1.
+Conclusion: not written.
+→ experiments/dropout_baseline/README.md, notebooks/dropout_baseline.ipynb, outputs/dropout_baseline/nektar_uv/ (local only)
+
 ## 2026-10-28 · exact-k evaluation · feat · PR #9
 Evaluate at exactly k of N faulty probes (`ks`, default `ks: all` = 0..N-1) instead of per-probe p; `ps` stays available.
 Result: `dropout_baseline` (still on `ps`) reproduces the meeting run bit for bit. No exact-k run on Nektar yet.

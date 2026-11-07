@@ -1,0 +1,24 @@
+# @package _global_
+# Faulty probes emit garbage instead of dropping out (2026-10-15 meeting follow-up), re-expressed.
+# record: experiments/random_readings/README.md
+name: random_readings
+runs:
+  - {method: shred, train: noise}
+  - {method: shred, train: missing}
+  - {method: shred_mask, train: missing}
+  - {method: sdn, train: noise}
+  - {method: sdn, train: missing}
+  - {method: robust_shred_v1, train: missing}
+  - {method: robust_shred_v2, train: missing}
+  - {method: gappy_pod, train: clean}
+  - {method: shred, train: garbage}
+  - {method: robust_shred_v1, train: garbage}
+  - {method: robust_shred_v2, train: garbage}
+eval:
+  conditions:               # ps first: keeps the meeting's p-mask draws (masks are drawn in condition order)
+    - {corruption: missing, flags: oracle, ps: [0.0, 0.3]}
+    - {corruption: garbage, flags: oracle, ps: [0.3]}
+    - {corruption: garbage, flags: silent, ps: [0.3]}
+    - {corruption: missing, flags: oracle, ks: all}
+    - {corruption: garbage, flags: oracle, ks: all}
+    - {corruption: garbage, flags: silent, ks: all}
