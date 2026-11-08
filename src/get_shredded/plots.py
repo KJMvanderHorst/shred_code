@@ -30,7 +30,8 @@ TEXT = "#52514e"
 
 
 def method_color(run: str) -> str:
-    return METHOD_COLORS.get(run, "#52514e")
+    # Runs without their own colour share their method's dropout-trained colour (e.g. shred__garbage).
+    return METHOD_COLORS.get(run) or METHOD_COLORS.get(run.split("__")[0] + "__missing", "#52514e")
 
 
 def condition_label(cond: str) -> str:
@@ -147,6 +148,29 @@ def plot_by_k(root, results: dict, methods: list[str], cond: str, metric: str, y
     return ax
 
 
+def plot_exact_k(results: dict, methods: list[str], prefix: str, ax=None, logy: bool = False):
+    """Error vs k for exact-k conditions ``<prefix>_k<k>`` (mean ± std over seeds); garbage-trained runs dashed."""
+    ax = ax or plt.subplots(figsize=(7, 4.2))[1]
+    for m in available_methods(results, methods):
+        conds = results[(m, _seeds(results, m)[0])]["metrics"]
+        k = sorted(int(c[len(prefix) + 2:]) for c in conds if c.startswith(f"{prefix}_k"))
+        if not k:
+            continue
+        stats_ = np.array([metric_over_seeds(results, m, f"{prefix}_k{kk}")[:2] for kk in k])
+        ax.plot(k, stats_[:, 0], marker="o", color=method_color(m), label=m,
+                linestyle="--" if m.endswith("__garbage") else "-")
+        ax.fill_between(k, stats_[:, 0] - stats_[:, 1], stats_[:, 0] + stats_[:, 1], color=method_color(m),
+                        alpha=0.12, linewidth=0)
+    ax.set_xlabel("faulty probes k (exactly)")
+    ax.set_ylabel("relative L2 error (test, unscaled)")
+    if logy:
+        ax.set_yscale("log")
+    fault, flags = prefix.split("_")
+    ax.set_title(f"{fault} ({flags}) vs number of faulty probes", loc="left")
+    ax.legend(frameon=False, fontsize=8, ncol=2)
+    return ax
+
+
 def _field(vec: np.ndarray, info: dict, channel: int) -> np.ndarray:
     n_points = int(info["n_points"])
     nx = int(info["nx"])
@@ -255,6 +279,6 @@ def save(fig, root, name: str) -> Path:
 
 __all__ = [
     "METHOD_COLORS", "method_color", "condition_label", "available_methods", "metric_over_seeds", "summary_table", "plot_error_bars", "per_sample",
-    "by_k", "k_counts_table", "plot_by_k", "plot_sensor_layout", "plot_reconstruction_panel",
+    "by_k", "k_counts_table", "plot_by_k", "plot_exact_k", "plot_sensor_layout", "plot_reconstruction_panel",
     "latent_correlations", "plot_latent_scatter", "save", "load_results",
 ]
