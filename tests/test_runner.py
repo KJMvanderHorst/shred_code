@@ -82,3 +82,33 @@ def test_runs_on_single_channel_1d_wave(tmp_path: Path) -> None:
     records = run_all(cfg)
     assert [r["status"] for r in records] == ["completed"] * len(runs)
     assert all(np.isfinite(r["garbage_silent_p0.3"]) for r in records)
+
+
+def test_decoupled_inputs(tmp_path: Path) -> None:
+    from get_shredded.runner import prepare_seed, run_name
+    from omegaconf import OmegaConf
+
+    data, wave = tmp_path / "nektar.mat", tmp_path / "wave.npz"
+    _write_random_nektar(data)
+    generate_wave_dataset(WaveGeneratorConfig(num_trajectories=2, nx=32, nt=40, num_modes=4), output_path=wave)
+    cfg = _cfg(tmp_path, [("shred", "noise")], [f"data.file={data}", f"wave_input.file={wave}"])
+    base = prepare_seed(cfg, 0)
+    assert np.array_equal(prepare_seed(cfg, 0, "probes").windows, base.windows)
+    shuffled = prepare_seed(cfg, 0, "shuffled_targets")
+    assert np.array_equal(shuffled.windows, base.windows) and not np.array_equal(shuffled.truth, base.truth)
+    for inp in ("wave_input", "random_input"):
+        sd = prepare_seed(cfg, 0, inp)
+        assert sd.windows.shape == base.windows.shape and not np.allclose(sd.windows, base.windows)
+        assert np.array_equal(sd.truth, base.truth)
+    run = OmegaConf.create({"method": "shred", "train": "noise", "input": "random_input", "early_stopping": False})
+    assert run_name(run) == "shred__noise__random_input__nostop"
+    assert run_name(OmegaConf.create({"method": "shred", "train": "noise"})) == "shred__noise"
+
+
+def test_train_error_recorded(tmp_path: Path) -> None:
+    data = tmp_path / "nektar.mat"
+    _write_random_nektar(data)
+    cfg = _cfg(tmp_path, [("sdn", "noise")], [f"data.file={data}"])
+    run_all(cfg)
+    metrics = load_results(output_root(cfg))[("sdn__noise", 0)]["metrics"]
+    assert np.isfinite(metrics["train"]["err"])

@@ -133,9 +133,11 @@ def fit(
     verbose: bool = False,
     patience: int = 5,
     augment_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    early_stopping: bool = True,
 ) -> torch.Tensor:
     """Training loop matching the paper: Adam + MSE, validation on relative
     L2 error every 20 epochs, early stopping on patience, restores best params.
+    early_stopping=False trains all epochs and keeps the final params.
 
     augment_fn is applied to each training batch only (not validation/test).
     """
@@ -190,13 +192,14 @@ def fit(
             else:
                 patience_counter += 1
 
-            if patience_counter == patience:
+            if early_stopping and patience_counter == patience:
                 pbar.close()
                 model.load_state_dict(best_params)
                 return torch.tensor(val_error_list)
 
     pbar.close()
-    model.load_state_dict(best_params)
+    if early_stopping:
+        model.load_state_dict(best_params)
     return torch.tensor(val_error_list)
 
 

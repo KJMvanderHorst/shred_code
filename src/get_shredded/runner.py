@@ -86,8 +86,24 @@ def output_root(cfg) -> Path:
     return _abs(cfg.outputs_root) / str(cfg.name) / str(cfg.data.name)
 
 
+INPUTS = ("probes", "wave_input", "random_input", "shuffled_targets")
+
+
+def run_input(run) -> str:
+    """Decoupling test: replace the probe series (wave/random) or pair windows with shuffled targets."""
+    inp = str(run.get("input", "probes"))
+    if inp not in INPUTS:
+        raise ValueError(f"unknown input {inp!r}; expected one of {INPUTS}")
+    return inp
+
+
 def run_name(run) -> str:
-    return f"{run.method}__{run.train}"
+    name = f"{run.method}__{run.train}"
+    if run_input(run) != "probes":
+        name += f"__{run_input(run)}"
+    if not bool(run.get("early_stopping", True)):
+        name += "__nostop"
+    return name
 
 
 def corruption_spec(cfg, name: str, **overrides) -> CorruptionSpec:
@@ -246,8 +262,12 @@ class SeedData:
         return len(self.locations)
 
 
-def prepare_seed(cfg, seed: int) -> SeedData:
-    """Load data, split, place probes, fit scaler, and draw all fixed corruptions."""
+def prepare_seed(cfg, seed: int, input: str = "probes") -> SeedData:
+    """Load data, split, place probes, fit scaler, and draw all fixed corruptions.
+
+    ``input`` other than ``probes`` breaks the physical link between inputs and targets (see ``INPUTS``);
+    placement, the target scaler and the sensor coordinates stay those of the real probes.
+    """
     data_path = _abs(cfg.data.file)
     source = str(cfg.data.source)
     load_X, nx, ny = load_dataset(source, data_path, trajectory_index=int(cfg.data.get("trajectory_index", 0)),
@@ -277,6 +297,25 @@ def prepare_seed(cfg, seed: int) -> SeedData:
 
     sigma = noise_std_from_training(load_X[train_idx][:, state_indices], float(cfg.noise_frac))
     sensor_range = (scaler.data_max_ - scaler.data_min_)[state_indices].astype(np.float32)
+    if input in ("wave_input", "random_input"):
+        if input == "wave_input":
+            wave, _, _ = load_dataset("wave", _abs(cfg.wave_input.file),
+                                      trajectory_index=int(cfg.wave_input.trajectory_index))
+            if wave.shape[0] < load_X.shape[0]:
+                raise ValueError(f"wave input has {wave.shape[0]} snapshots, need {load_X.shape[0]}")
+            # interior points only: the wave is zero at both ends (zero MinMax range)
+            cols = np.linspace(0, wave.shape[1] - 1, len(state_indices) + 2)[1:-1].round().astype(int)
+            series = wave[: load_X.shape[0], cols].astype(np.float64)
+        else:
+            series = np.random.default_rng([seed, 5]).standard_normal((load_X.shape[0], len(state_indices)))
+        input_scaler = MinMaxScaler().fit(series[train_idx])
+        windows = build_sensor_windows(input_scaler.transform(series).astype(np.float32),
+                                       np.arange(len(state_indices)), lags)
+        sigma = noise_std_from_training(series[train_idx], float(cfg.noise_frac))
+        sensor_range = (input_scaler.data_max_ - input_scaler.data_min_).astype(np.float32)
+    elif input == "shuffled_targets":  # windows stay real; window i's target becomes snapshot perm[i + lags - 1]
+        perm = np.random.default_rng([seed, 4]).permutation(load_X.shape[0])
+        load_X, transformed_X = load_X[perm], transformed_X[perm]
 
     rng_val = np.random.default_rng([seed, 1])
     valid_noise = (rng_val.standard_normal((len(valid_idx), lags, len(state_indices))) * sigma).astype(np.float32)
@@ -375,6 +414,13 @@ def run_config(cfg, run, seed: int) -> dict[str, Any]:
     if method.kind != "pod":
         config["train"] = OmegaConf.to_container(cfg.train)
         config["train_corruption"] = asdict(corruption_spec(cfg, run.train))
+    # Only when non-default, so earlier runs keep their fingerprints.
+    if run_input(run) != "probes":
+        config["input"] = run_input(run)
+        if run_input(run) == "wave_input":
+            config["wave_input"] = OmegaConf.to_container(cfg.wave_input)
+    if not bool(run.get("early_stopping", True)):
+        config["early_stopping"] = False
     return json.loads(json.dumps(config, default=str))
 
 
@@ -489,6 +535,7 @@ def _train_and_evaluate(cfg, sd: SeedData, run, device: str) -> tuple[dict, dict
         TimeSeriesDataset(torch.tensor(valid_x, device=device), targets(sd.valid_idx)),
         batch_size=int(cfg.train.batch_size), num_epochs=int(cfg.train.epochs), lr=float(cfg.train.lr),
         verbose=False, patience=int(cfg.train.patience), augment_fn=augment,
+        early_stopping=bool(run.get("early_stopping", True)),
     )
     model.eval()
     test_windows = sd.windows[sd.test_idx]
@@ -502,6 +549,10 @@ def _train_and_evaluate(cfg, sd: SeedData, run, device: str) -> tuple[dict, dict
         return sd.scaler.inverse_transform(pred), latent
 
     metrics, arrays = _evaluate(cfg, sd, recon_fn, panel_windows)
+    train_pred, _ = _predict(model, _format_inputs(sd, sd.windows[sd.train_idx], None, None,
+                                                   CorruptionSpec(noise=False), method), device, False)
+    metrics["train"] = {"err": _aggregate_rel_error(sd.scaler.inverse_transform(train_pred),
+                                                    sd.load_X[sd.train_idx + lags - 1])}
     arrays["val_history"] = np.asarray(history)
     metrics["epochs_used"] = int(len(history))  # validation checks (every 20 epochs)
     metrics["parameters"] = _parameter_count(model)
@@ -536,10 +587,11 @@ def run_all(cfg) -> list[dict[str, Any]]:
     for run in runs:
         if run.method not in cfg.methods or run.train not in cfg.corruptions:
             raise ValueError(f"unknown method or train corruption in run {dict(run)}")
+        run_input(run)
     seeds = [int(s) for s in cfg.eval.seeds]
     records = []
     for seed in seeds:
-        sd = None
+        sds: dict[str, SeedData] = {}  # one per input variant
         for run in runs:
             name = run_name(run)
             config = run_config(cfg, run, seed)
@@ -550,9 +602,12 @@ def run_all(cfg) -> list[dict[str, Any]]:
                 records.append(record)
                 print(json.dumps(record))
                 continue
-            if sd is None:
-                sd = prepare_seed(cfg, seed)
-                save_seed_info(sd, root / f"seed{seed}", int(cfg.eval.panel_windows))
+            inp = run_input(run)
+            if inp not in sds:
+                sds[inp] = prepare_seed(cfg, seed, inp)
+                if inp == "probes":
+                    save_seed_info(sds[inp], root / f"seed{seed}", int(cfg.eval.panel_windows))
+            sd = sds[inp]
             started = time.time()
             payload: dict[str, Any] = {
                 "experiment": str(cfg.name), "run": name, "seed": seed, "config": config,

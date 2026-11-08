@@ -33,6 +33,9 @@ sensors:
   num: 8
   rank: 16                  # POD rank for block-QR placement and gappy POD (2 x num)
 noise_frac: 0.05            # sigma = noise_frac x per-channel training std (unscaled)
+wave_input:                 # replacement input series for runs with input: wave_input (decoupling test)
+  file: data/wave_1d.npz
+  trajectory_index: 1
 
 train:
   epochs: 1000

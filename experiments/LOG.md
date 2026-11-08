@@ -17,6 +17,12 @@ Conclusion: <what we take from it, or "not written">
 
 ---
 
+## 2026-11-08 · physical_relation · exp · PR #12 · tentative
+Does reconstruction need a physical relation between probe readings and the field? SHRED, SDN, RobustSHREDv2 (noise training) with real probes, a physically unrelated wave signal, a fixed random series, or real probes with shuffled targets; with and without early stopping. Adds per-run `input` and `early_stopping`, and `train_err` for every trained run.
+Result (test, mean over 3 seeds; mean-field floor 0.328): probes 0.004–0.007; wave input 0.010–0.016 for every method; random input: SHRED 0.07–0.08, SDN memorises without early stopping (train 0.018) but tests at 0.40, v2 at the floor (fits on 1 of 3 seeds without early stopping); shuffled targets at the floor, and not memorised in 1000 epochs either (train 0.25–0.27).
+Conclusion: A physical relation is not needed for low error: any smooth, time-unique input gets within 2–4× of the real probes, so physics buys only that factor. The models interpolate a smooth input-to-field map (SHRED even exploits overlapping random windows) and do not memorise arbitrary pairs. Interpretation: training never forces the encoder to learn cross-probe physical consistency, consistent with implicit fault detection losing to flags (not tested directly). Interleaved split makes a smooth clock sufficient; a block split may differ.
+→ experiments/physical_relation/README.md, docs/protocol.md (Input, Early stopping, Training error rows), outputs/physical_relation/nektar_uv/ (local only)
+
 ## 2026-11-07 · random_readings (rerun) · exp · PR #11 · tentative
 Rerun of the 2026-10-15 garbage experiment on `runner.py`, 3 seeds throughout (the garbage-trained models were seed 0 only), plus exactly-k evaluation. Faulty probes emit N(0.5, 0.5), flagged (oracle) or undetected (silent).
 Result (p = 0.3, mean over 3 seeds): every meeting number reproduces bit for bit except RobustSHREDv1/v2 (within seed std). Silent garbage: 0.11–0.23 for every dropout-trained method (SHRED+mask 0.108, SHRED-noise 0.119, RobustSHREDv2 0.138, v1 0.149, SHRED-dropout 0.151, gappy POD 0.235); with oracle flags the masked RobustSHREDs equal dropout (0.015). Trained on silent garbage: RobustSHREDv2 0.033 ± 0.003, SHRED 0.049 ± 0.007, RobustSHREDv1 0.074 ± 0.006 under silent garbage, at a clean cost of 0.016–0.032. Exact k, silent: dropout-trained models reach ≈ 0.04–0.11 already at k = 1; garbage-trained RobustSHREDv2 stays ≤ 0.04 up to k = 4.

@@ -35,6 +35,7 @@ All results so far are **tentative**: the protocol is still being settled.
 | Fault scope | — | A faulty probe is faulty in every channel, for the whole lag window | One physical probe fails, not one reading | |
 | Training severity | `corruptions.*.p` | Each probe faulty with probability p = 0.3; draws where every probe fails are resampled | A different fault pattern every batch | |
 | Evaluation severity | `eval.conditions[].ks` | Exactly k of N probes faulty, k = 0..N-1 (`ks: all`); a fresh uniformly random subset per test window and draw, shared by all methods | Error as a function of k, without mixing severities in one number | Never all N faulty. `ps` (per-probe p, as in training) is still available; `dropout_baseline` and `random_readings` report `ps: [0, 0.3]` next to `ks: all`, for comparison with the meeting |
+| Input | `runs[].input` | `probes`: the real probe readings | | Decoupling tests only: `wave_input` (16 columns of wave trajectory `wave_input.trajectory_index`), `random_input` (fixed seeded N(0,1) series), `shuffled_targets` (real probes, targets at a fixed seeded time permutation). Placement, target scaler and sensor coordinates stay those of the real probes |
 | Missing fill | `corruptions.missing.fill` | 0.0 in scaled input space | | 0 is the per-sensor training minimum, not "no signal" |
 | Garbage | `corruptions.garbage.garbage_*` | N(0.5, 0.5) per channel per lag, scaled input space | A broken probe emits plausible-range nonsense | |
 | Flags | `corruptions.*.flags`, `eval.conditions[].flags` | `oracle`: models with a mask input get the true fault mask. `silent`: they get an all-zero mask | Separates "fault known" from "fault undetected" | Models without a mask input (SHRED, SDN) behave the same under both. Gappy POD drops faulty rows under `oracle` and uses them under `silent` |
@@ -45,9 +46,10 @@ All results so far are **tentative**: the protocol is still being settled.
 | Choice | Config key | Default | Rationale | Caveat |
 |---|---|---|---|---|
 | Training | `train.*` | Adam, lr 1e-3, batch 64, MSE, up to 1000 epochs | SHRED paper setting | |
-| Early stopping | `train.patience` | Validation relative L2 every 20 epochs, patience 5, best weights restored | | |
+| Early stopping | `train.patience`, `runs[].early_stopping` | Validation relative L2 every 20 epochs, patience 5, best weights restored | | `early_stopping: false` (decoupling tests only) trains all epochs and keeps the final weights |
 | Gappy POD | `methods.gappy_pod.clip` | Least squares on the leading `sensors.rank` modes, clipped to the per-pixel training range | Linear baseline | Not trained; the run's train corruption is ignored |
 | Error metric | — | Relative L2 over all test snapshots in unscaled units (`err`), also per channel (`err_u`, `err_v`) and per snapshot | | |
+| Training error | — | Relative L2 on the clean (noise-free) training windows, unscaled (`train_err`); trained models only | Separates memorisation from generalisation | Recorded from `physical_relation` on; earlier runs lack it |
 | Invariance | — | `d_latent`, `d_recon`: relative change of latent and reconstruction from clean to corrupted input | Tests whether models ignore faulty probes | |
 
 ## Planned, not built
