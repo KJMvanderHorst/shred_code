@@ -119,6 +119,31 @@ Tentative (3 seeds, one flow).
    they never saw a flag in training.
 7. **The meeting overstated v1.** Seed-0 numbers 0.045 / 0.058 / 0.031 (SHRED / v1 / v2)
    become 0.049 / 0.074 / 0.033 over 3 seeds.
+8. **What the model knows about the faults is a main factor, next to the training
+   corruption.** Three levels, at p = 0.3:
+
+   | Information | Example | Missing | Garbage |
+   |---|---|---:|---:|
+   | none (silent), trained on dropout | RobustSHREDv1 / v2 | 0.015 | 0.149 / 0.138 |
+   | none (silent), trained on garbage | RobustSHREDv2 | 0.042 | 0.033 |
+   | flags as an input | SHRED+mask | 0.011 | 0.128 (0.108 without flags) |
+   | flags exclude probes | RobustSHREDv1 / v2 | 0.0146 / 0.0143 | 0.0146 / 0.0143 |
+   | flags exclude probes | gappy POD | 0.092 | 0.092 |
+
+   - Information is worth ≈ 10× (the same dropout-trained v1/v2: 0.015 with flags vs
+     0.14 without under garbage).
+   - How it enters matters: exclusion makes faulty probes irrelevant by construction,
+     whatever they emit; flags as an input are learned, and only help for the fault seen
+     with them in training.
+   - The information regime must match training, even with exclusion: models trained
+     with flags collapse without them (0.14), models trained without flags get worse
+     with them (v2 0.033 → 0.042). Exclusion protects against a change of fault type,
+     not a change of flag regime.
+   - Under dropout flags barely matter (SHRED 0.0145 vs SHRED+mask 0.0113), because a
+     constant-zero probe is self-flagging; the axis only shows under garbage.
+   - Caveat: information route and architecture are confounded (only v1/v2 and gappy POD
+     exclude, only SHRED+mask takes flags as input). The exclusion invariance is
+     structural; "flags as input generalise badly" rests on one model.
 
 **Validity.** The limits in `experiments/dropout_baseline/README.md` apply here too
 (≈ 153 training windows for 4.2 M parameters, 99 % in a decoder shared by every method;
