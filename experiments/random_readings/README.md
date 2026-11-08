@@ -81,4 +81,54 @@ flags than without (v1 0.088 vs 0.074, v2 0.042 vs 0.033 at p = 0.3).
 
 ## Conclusion
 
-Not written yet.
+Tentative (3 seeds, one flow).
+
+1. **Silent garbage is ≈ 10× worse than dropout.** Every dropout-trained model lands at
+   0.11–0.15 under silent garbage at p = 0.3 (vs 0.011–0.024 for missing). One silent
+   garbage probe (k = 1) costs 0.04–0.11, more than five missing probes.
+2. **Learned robustness is fault-specific.** `shred__missing` (0.151) is worse than
+   `shred__noise` (0.119) under silent garbage, and worse at every k ≥ 2: dropout training
+   seems to teach "0 means ignore", which garbage never triggers. The reverse holds too:
+   garbage-trained models are worse on missing (v2 0.042) than on garbage (0.033), and far
+   worse than dropout-trained models (0.014).
+3. **Hard masking is fault-agnostic; flags as input are not.** With oracle flags,
+   RobustSHREDv1/v2 give exactly their missing numbers under garbage (0.0146, 0.0143), as
+   does gappy POD (0.092): excluded probes have no influence. SHRED+mask is worse *with*
+   true flags (0.128) than without (0.108): it learned "flag + value 0" jointly, and a flag
+   next to a nonzero value is out of distribution.
+4. **Detection is the bottleneck.** For RobustSHRED, oracle 0.015 vs silent 0.14: a perfect
+   detector is worth ≈ 10×.
+5. **Training on silent garbage helps a lot; the architecture ordering is suggestive only.**
+
+   | Garbage-trained | Silent p = 0.3 | Clean | Silent k = 4 |
+   |---|---:|---:|---:|
+   | RobustSHREDv2 | 0.033 ± 0.003 | 0.016 | 0.039 |
+   | SHRED | 0.049 ± 0.007 | 0.020 | 0.056 |
+   | RobustSHREDv1 | 0.074 ± 0.006 | 0.032 | 0.111 |
+   | best dropout-trained (SHRED+mask) | 0.108 | 0.010 | 0.164 |
+
+   3–4× better than dropout-trained models in every seed, still ≈ 2× worse than oracle
+   (0.015). The order v2 < SHRED < v1 holds in each seed (silent, seed 0/1/2: v2
+   0.032/0.029/0.037, SHRED 0.056/0.039/0.051, v1 0.076/0.079/0.066), but 3/3 is only
+   p = 1/8 on a sign test, and the encoders are untuned. v1's clean error (0.032, 2× SHRED)
+   points to an optimisation or underfitting problem rather than an inability to detect
+   faults. Invariance is in line with the ordering: under silent garbage v2's
+   reconstruction moves 2 % from clean (`d_recon` 0.020), against ≈ 10 % for
+   dropout-trained models.
+6. **Oracle flags hurt garbage-trained models** (v2 0.042 vs 0.033, v1 0.088 vs 0.074):
+   they never saw a flag in training.
+7. **The meeting overstated v1.** Seed-0 numbers 0.045 / 0.058 / 0.031 (SHRED / v1 / v2)
+   become 0.049 / 0.074 / 0.033 over 3 seeds.
+
+**Validity.** The limits in `experiments/dropout_baseline/README.md` apply here too
+(≈ 153 training windows for 4.2 M parameters, 99 % in a decoder shared by every method;
+periodic wake with an interleaved split, so the task is close to recovering the shedding
+phase; 19-window test and validation sets; hyperparameters untuned per method; a seed
+varies everything at once). What stands: the large or structural effects (silent vs
+oracle, dropout- vs garbage-trained under silent garbage, no transfer between fault
+types, exact invariance under hard masking). What does not: the ranking of v1, v2 and SHRED.
+
+Other caveats: both faults are easy to detect (garbage is i.i.d. per lag, so temporally
+incoherent, and outside [0, 1] ≈ 32 % of the time); `stuck`/`drift` would be harder.
+Garbage-trained models are tested on their own training distribution and p. 3 seeds, one
+flow, interleaved split. The v1/v2 divergence from the meeting run is unexplained.

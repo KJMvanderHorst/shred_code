@@ -65,4 +65,43 @@ Exactly k of 8 probes missing (oracle), mean over 3 seeds:
 
 ## Conclusion
 
-Not written yet.
+Tentative (3 seeds, one flow).
+
+1. **Fault-agnostic training is brittle.** Noise-trained SHRED/SDN go from 0.004 clean
+   to 0.16–0.18 at p = 0.3; a single missing probe (k = 1) already costs 0.08–0.09, 20× clean.
+2. **Dropout training fixes it, at a clean cost.** Every dropout-trained model stays at
+   0.011–0.024 at p = 0.3, but clean error rises ≈ 2.5× (0.004 → 0.010).
+3. **No architecture ranking is supported.** SHRED+mask 0.0113 ± 0.002 is marginally best;
+   SHRED 0.0145, RobustSHREDv1 0.0146, v2 0.0143 tie, and their order flips per seed
+   (p = 0.3 by seed 0/1/2: SHRED 0.0097/0.0159/0.0180, v1 0.0162/0.0135/0.0140,
+   v2 0.0166/0.0133/0.0131). v1 is only slightly better at k = 7 (0.126 vs 0.153; one
+   level, 3 seeds). Possible reason (not tested): a missing probe reads a constant 0 at
+   every lag, so it is self-flagging and plain SHRED can infer the mask.
+4. **Time history matters.** SDN (last lag only) is ≈ 2× worse than SHRED (0.024 vs 0.0145).
+5. **Graceful, then a cliff.** Dropout-trained models stay at 0.01–0.03 up to k = 5 of 8,
+   then 0.05–0.11 at k = 6 and 0.13–0.21 at k = 7.
+6. **Gappy POD has no redundancy.** Best clean (0.0007), but 0.014 with noise and 0.07 at
+   k = 1: 8 probes × 2 channels = 16 measurements for 16 modes, so losing one probe makes
+   the least-squares problem underdetermined.
+7. **v dominates the error.** err_v ≈ 5× err_u for every model (e.g. SHRED+mask at
+   p = 0.3: u 0.006, v 0.034).
+
+**Validity.** What these runs can and cannot show:
+- *Data vs parameters.* 200 snapshots, 10 lags → ≈ 191 windows, ≈ 153 train / 19 val /
+  19 test. Every model has ≈ 4.2 M parameters, of which the decoder (64 → 350 → 400 → 10 000,
+  4.17 M) is identical across methods; the encoders that define the "methods" are small
+  (SHRED GRU ≈ 41 k, RobustSHREDv1 ≈ 51 k, v2 ≈ 100 k; 1–2 % of the total).
+- *What is learned.* The Re = 100 wake is periodic and the split is interleaved (each test
+  window has training windows one step away), so the decoder can in effect memorise the
+  training snapshots and the task is close to recovering the shedding phase from the
+  probes (interpretation, not measured). The experiment compares how robustly the
+  encoders recover it; absolute errors are interpolation errors, not reconstruction of
+  unseen flow.
+- *Noise sources.* Hyperparameters (lr, hidden 64, early stopping) were set for SHRED and
+  not tuned per method; early stopping selects on 19 windows with one corruption draw;
+  a seed changes split, placement, initialisation and faults at once.
+- *What stands.* Large (≥ 3×) or structural effects: noise-only vs dropout training,
+  gappy POD's lack of redundancy. Architecture differences among dropout-trained models do not.
+
+Other caveats: the zero fill is an easy fault to detect; the v1/v2 divergence from the
+meeting run is unexplained.
