@@ -1,0 +1,31 @@
+# @package _global_
+# Does reconstruction need a physical relation between probe readings and the output field?
+# record: experiments/physical_relation/README.md
+name: physical_relation
+runs:
+  # protocol training (early stopping on validation)
+  - {method: shred, train: noise}
+  - {method: sdn, train: noise}
+  - {method: robust_shred_v2, train: noise}
+  - {method: shred, train: noise, input: wave_input}
+  - {method: sdn, train: noise, input: wave_input}
+  - {method: robust_shred_v2, train: noise, input: wave_input}
+  - {method: shred, train: noise, input: random_input}
+  - {method: sdn, train: noise, input: random_input}
+  - {method: robust_shred_v2, train: noise, input: random_input}
+  - {method: shred, train: noise, input: shuffled_targets}
+  - {method: sdn, train: noise, input: shuffled_targets}
+  - {method: robust_shred_v2, train: noise, input: shuffled_targets}
+  # deviation: all 1000 epochs, final weights (memorisation capacity)
+  - {method: shred, train: noise, input: wave_input, early_stopping: false}
+  - {method: sdn, train: noise, input: wave_input, early_stopping: false}
+  - {method: robust_shred_v2, train: noise, input: wave_input, early_stopping: false}
+  - {method: shred, train: noise, input: random_input, early_stopping: false}
+  - {method: sdn, train: noise, input: random_input, early_stopping: false}
+  - {method: robust_shred_v2, train: noise, input: random_input, early_stopping: false}
+  - {method: shred, train: noise, input: shuffled_targets, early_stopping: false}
+  - {method: sdn, train: noise, input: shuffled_targets, early_stopping: false}
+  - {method: robust_shred_v2, train: noise, input: shuffled_targets, early_stopping: false}
+eval:
+  conditions:
+    - {corruption: noise, flags: oracle, ps: [0.0]}
