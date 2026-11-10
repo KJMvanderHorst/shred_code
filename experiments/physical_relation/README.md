@@ -74,30 +74,49 @@ after 7–15 validation checks.
 
 ## Conclusion
 
-Tentative (3 seeds, one flow, noise training only).
+Tentative (3 seeds, one flow, noise training only). Revised 2026-11-10 after measuring how
+unique the input windows are (seed 0):
 
-1. **A physical relation is not needed for low error.** A physically unrelated but smooth
-   signal (`wave_input`) gives 0.010–0.016, 20–30× below the floor and only 2–4× above the
-   real probes (0.004–0.007), for every method, consistently across seeds. Physics buys a
-   factor 2–4; most of the performance comes from having *some* smooth, time-unique input.
-2. **What the models need is a smooth, consistent input-to-time map.** Random but temporally
-   overlapping input still lets SHRED generalise partly (test 0.07–0.08, train 0.014): its
-   GRU exploits that neighbouring windows share 9 of 10 lags. SDN, which sees one random
-   key per window, memorises it without stopping (train 0.018) but does not generalise at all
-   (test 0.40, above the floor): pure memorisation.
-3. **The capacity to memorise is real, but not arbitrary.** Shuffled targets are not fitted
-   even in 1000 epochs (train 0.25–0.27, test 0.39–0.41): with real probes, nearby inputs
-   (plus 5 % training noise) must map to unrelated fields, which the models cannot do.
-   The models interpolate a smooth input-to-field map; they do not memorise arbitrary pairs.
-4. **Consequence for the fault experiments (interpretation).** Since reconstruction only
-   needs a smooth clock, nothing in training forces the encoder to learn the cross-probe
-   physical consistency that implicit fault detection would rely on. This fits the gap
-   between implicit (silent, garbage-trained) and oracle RobustSHRED, but these runs do
-   not test it directly.
-5. **Side observations.** v2 is less stable without early stopping (`wave_input` 0.028 vs
-   0.013; random input fits on one seed of three). Early stopping on decoupled inputs ends
-   at the floor after 7–15 checks, as expected.
+| Input | Neighbouring windows differ by | Nearest window ≥ 15 steps away | Noise per window |
+|---|---:|---:|---:|
+| probes | 0.74 | 0.012 (one cycle = 59 steps later) | 0.23 |
+| wave | 0.18 | 2.4 (never repeats) | 0.18 |
+| random | 3.4 | 3.0 | 0.12 |
 
-Caveats: the interleaved split puts test windows one step from training windows, which is
-what lets a smooth clock work; a block split or a different flow might need physics more.
-`random_input` windows overlap in time by construction. Noise training only; no faults.
+The wake repeats every 59 snapshots (≈ 3.4 cycles in 200): probe windows one cycle apart are
+20× closer than the noise. Probes encode the **phase**; the wave input encodes **time**.
+
+1. **Under the interleaved split, an input that only encodes time works nearly as well as the
+   probes.** `wave_input` gives 0.010–0.016 against 0.004–0.007, for every method and seed.
+   The interleaved split is the intended SHRED setting (reconstruction within the observed
+   dynamics), but it puts every test window between training windows one step away, so it
+   cannot tell an input that tracks the flow state from one that tracks time. Whether a
+   physical relation is needed is therefore **not yet tested**.
+2. **The probes' advantage is exact phase matches.** Every probe test window has nearly
+   identical training windows one cycle away; the wave input only has neighbours one step
+   away (as far apart as the noise) and must interpolate. That gap, not "physics", is the
+   likely source of the 2–4× difference.
+3. **The models can memorise arbitrary pairs.** SDN on random keys, without early stopping,
+   fits the training set (train 0.018) and fails on test (0.40, ≈ a random training
+   snapshot), confirming the overparametrisation hypothesis.
+4. **Overlapping windows carry information between training and test.** SHRED on random input
+   reaches 0.07 (SDN: 0.40) because a test window shares 9 of 10 lags with neighbouring
+   training windows and the GRU recognises the shared values. This applies to every
+   experiment with the interleaved split, by design.
+5. **Shuffled targets is not a capacity test.** Windows one cycle apart have practically
+   identical probe inputs but, after shuffling, unrelated targets, so the mapping is not a
+   function. The best fit averages the ≈ 3 targets per phase, ≈ 0.33 × √(2/3) ≈ 0.27, which
+   matches the observed train error 0.25–0.27 (back-of-envelope). Capacity is shown by point 3.
+6. **Link to implicit fault detection (interpretation, weaker than first written).** If a
+   time-like signal suffices for reconstruction, training does not force the encoder to
+   learn cross-probe physical consistency. Not tested; depends on point 1.
+7. **Side observations.** v2 is less stable without early stopping (`wave_input` 0.028 vs
+   0.013; random input fits on one seed of three), an optimisation issue.
+
+Next test (not run): a block split, testing on a later cycle, with the same inputs plus a
+periodic phase clock (sin/cos with the 59-step period). Expected: probes and the phase clock
+keep working, wave and random inputs fail; that would show the input has to encode where in
+the cycle the flow is, not what time it is. Needs enough cycles to give a gap of ≥ `lags`
+between blocks and a test block that covers the whole cycle (see `experiments/LOG.md`).
+
+Caveats: 3 seeds, one periodic flow, noise training only, uniqueness measured on seed 0.
