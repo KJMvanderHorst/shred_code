@@ -379,6 +379,7 @@ def _build_model(sd: SeedData, method, device: str, data=None) -> torch.nn.Modul
             trunk_width=int(method.trunk_width), trunk_layers=int(method.trunk_layers),
             physics_weight=float(method.physics_weight), n_colloc=int(method.n_colloc),
             num_frequencies=int(method.num_frequencies),
+            probe_idx=sd.locations, probe_weight=float(method.get("probe_weight", 0.0)),
         )
     elif kind == "sdn":
         model = SDN(c * n, m, l1=int(method.l1), l2=int(method.l2), dropout=float(method.dropout))
@@ -529,6 +530,9 @@ def _train_and_evaluate(cfg, sd: SeedData, run, device: str) -> tuple[dict, dict
         return metrics, arrays, None
 
     spec = corruption_spec(cfg, run.train)
+    if float(method.get("probe_weight", 0.0)) > 0 and (spec.noise or spec.fault != "none"):
+        # shortcut: clean training only; mask faulty probes before using it with noise or faults
+        raise ValueError(f"{run_name(run)}: probe_weight fits the input readings, so it needs train: clean")
     torch.manual_seed(sd.seed)
     np.random.seed(sd.seed)
     model = _build_model(sd, method, device, cfg.data)

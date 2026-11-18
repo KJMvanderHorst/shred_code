@@ -18,6 +18,10 @@ defaults:
   - method@methods.trunk_shred_ff8: trunk_shred_ff8
   - method@methods.trunk_shred_pinn_strong: trunk_shred_pinn_strong
   - method@methods.trunk_shred_pinn_weak: trunk_shred_pinn_weak
+  - method@methods.trunk_shred_probes: trunk_shred_probes
+  - method@methods.trunk_shred_pinn_probes: trunk_shred_pinn_probes
+  - method@methods.trunk_shred_pinn_weak_probes: trunk_shred_pinn_weak_probes
+  - method@methods.trunk_shred_pinn_strong_probes: trunk_shred_pinn_strong_probes
   - corruption@corruptions.clean: clean
   - corruption@corruptions.noise: noise
   - corruption@corruptions.missing: missing

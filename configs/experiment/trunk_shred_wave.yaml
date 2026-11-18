@@ -12,6 +12,11 @@ runs:
   - {method: trunk_shred_ff8, train: clean}
   - {method: trunk_shred_pinn_strong, train: clean}
   - {method: trunk_shred_pinn_weak, train: clean}
+  # probe supervision: the trunk also fits the probe readings at every lag (gives u_t at the probes)
+  - {method: trunk_shred_probes, train: clean}
+  - {method: trunk_shred_pinn_weak_probes, train: clean}
+  - {method: trunk_shred_pinn_probes, train: clean}
+  - {method: trunk_shred_pinn_strong_probes, train: clean}
 eval:
   conditions:
     - {corruption: clean, flags: oracle, ps: [0.0]}
