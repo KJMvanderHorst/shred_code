@@ -116,8 +116,9 @@ class TrunkSHRED(SHRED):
 
     ``forward`` returns the field at the grid x and tau = 0, MinMax-scaled like SHRED's targets
     (u * out_scale + out_offset), so training, validation and metrics are unchanged. The model
-    itself works in physical units, so ``physics_loss`` (wave residual + Dirichlet BCs on random
-    collocation points, weighted by ``physics_weight``) uses true derivatives.
+    itself works in physical units, so ``aux_loss`` (wave residual + Dirichlet BCs on random
+    collocation points, weighted by ``physics_weight``) uses true derivatives. With ``probe_weight``,
+    ``aux_loss`` also fits the trunk to the probe readings at every lag (the model's own clean input).
     """
 
     def __init__(
@@ -139,6 +140,8 @@ class TrunkSHRED(SHRED):
         physics_weight: float = 0.0,
         n_colloc: int = 64,
         num_frequencies: int = 0,
+        probe_idx=None,
+        probe_weight: float = 0.0,
     ) -> None:
         super().__init__(input_size, 1, hidden_size=hidden_size, hidden_layers=hidden_layers, l1=1, l2=1,
                          recurrent_cell=recurrent_cell)
@@ -158,6 +161,12 @@ class TrunkSHRED(SHRED):
         self.tau_span = max(int(lags) - 1, 1) * float(dt)
         self.physics_weight = float(physics_weight)
         self.n_colloc = int(n_colloc)
+        self.lags = int(lags)
+        self.probe_weight = float(probe_weight)
+        if self.probe_weight > 0 and probe_idx is None:
+            raise ValueError("probe_weight > 0 needs probe_idx")
+        self.register_buffer("probe_idx", torch.as_tensor([] if probe_idx is None else probe_idx, dtype=torch.long),
+                             persistent=False)  # from the data (placement), not a trained parameter
 
     def field(self, b: torch.Tensor, x: torch.Tensor, tau: torch.Tensor) -> torch.Tensor:
         """Physical u at (x, tau): b (B, p); x, tau (Q,) or (B, Q). Returns (B, Q)."""
@@ -174,10 +183,26 @@ class TrunkSHRED(SHRED):
         u = self.field(self.coefficients(x), self.x_grid, torch.zeros_like(self.x_grid))
         return u * self.out_scale + self.out_offset
 
-    def physics_loss(self, x: torch.Tensor) -> torch.Tensor:
-        if self.physics_weight == 0.0:
+    def probe_field(self, b: torch.Tensor) -> torch.Tensor:
+        """Scaled u at the probes for every lag: (B, lags, N); lag j is tau_j = (j - lags + 1) dt."""
+        n = len(self.probe_idx)
+        tau = torch.arange(1 - self.lags, 1, device=b.device) * (self.tau_span / max(self.lags - 1, 1))
+        x = self.x_grid[self.probe_idx].repeat(self.lags)  # lag-major: [all probes at lag 0, ...]
+        u = self.field(b, x, tau.repeat_interleave(n)).view(-1, self.lags, n)
+        return u * self.out_scale[self.probe_idx] + self.out_offset[self.probe_idx]
+
+    def aux_loss(self, x: torch.Tensor) -> torch.Tensor:
+        """Training-only terms next to the data loss: physics (wave residual + BCs) and the probe readings at
+        every lag (x itself, so only valid for clean inputs; the runner enforces that)."""
+        if self.physics_weight == 0.0 and self.probe_weight == 0.0:
             return x.new_zeros(())
         b = self.coefficients(x)
+        loss = x.new_zeros(())
+        if self.probe_weight > 0.0:
+            n = len(self.probe_idx)
+            loss = loss + self.probe_weight * (self.probe_field(b) - x[..., :n]).square().mean()
+        if self.physics_weight == 0.0:
+            return loss
         shape = (x.shape[0], self.n_colloc)
         xs = (torch.rand(shape, device=x.device) * self.L).requires_grad_()
         ts = (-torch.rand(shape, device=x.device) * self.tau_span).requires_grad_()
@@ -185,7 +210,7 @@ class TrunkSHRED(SHRED):
         residual = wave_residual(self.field(b, xs, ts), xs, ts, self.c) / omega1**2
         xb = torch.randint(0, 2, shape, device=x.device).float() * self.L
         boundary = self.field(b, xb, -torch.rand(shape, device=x.device) * self.tau_span)
-        return self.physics_weight * (residual.square().mean() + boundary.square().mean())
+        return loss + self.physics_weight * (residual.square().mean() + boundary.square().mean())
 
 
 class SDN(nn.Module):
@@ -255,8 +280,8 @@ def fit(
                 batch_x = augment_fn(batch_x)
             optimizer.zero_grad()
             loss = criterion(model(batch_x), batch_y)
-            if hasattr(model, "physics_loss"):
-                loss = loss + model.physics_loss(batch_x)
+            if hasattr(model, "aux_loss"):
+                loss = loss + model.aux_loss(batch_x)
             loss.backward()
             optimizer.step()
             epoch_loss += float(loss.item())

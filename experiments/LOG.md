@@ -17,6 +17,12 @@ Conclusion: <what we take from it, or "not written">
 
 ---
 
+## 2026-11-18 · trunk_shred_wave (probe supervision) · exp · PR #14 · tentative
+Part 1 left u_t unsupervised. Fit the trunk also to the probe readings at every lag (the model's own clean input, μ = 1), for λ = 0 / 1e-4 / 1e-3 / 1e-2; adds `probe_weight` and `aux_loss` (renamed from `physics_loss`) to `TrunkSHRED`.
+Result (wave, clean, 3 seeds): τ = 0 test 0.0432 ± 0.0103 (no physics) and 0.0354 ± 0.0083 (λ = 1e-3) vs 0.0285 / 0.0255 without probe supervision. û_t at the probes improves (0.38 / 0.26 vs ≈ 1.0) but between them gets worse than predicting no motion (1.44 / 1.27); window error 0.284 / 0.263 vs 0.220, above the copy-back baseline (≈ 0.21). QR probes sit in two clusters (gaps up to 0.85) while a wave travels ≈ 0.07 per window.
+Conclusion: Probe supervision pins velocity only at the probes; neither the data nor the PDE can carry it across the gaps within one window, so it hurts both the window and τ = 0. Physics helps relative to probes alone (first measurable physics effect) but does not recover the loss. Leads: probes placed for dynamics, a longer window, full-field supervision beyond τ = 0.
+→ experiments/trunk_shred_wave/README.md (part 2), notebooks/trunk_shred_wave.ipynb, docs/protocol.md (Trunk SHRED row), outputs/trunk_shred_wave/wave/ (local only)
+
 ## 2026-11-10 · trunk_shred_wave · feat · PR #13 · tentative
 DeepONet-style SHRED with a physics loss, verified on the 1D wave: SHRED GRU branch, tanh trunk over (x, τ) with 16 Fourier frequencies on x, wave residual + Dirichlet BCs on random collocation points (λ = 1e-3). Adds `TrunkSHRED`, `wave_residual`, a `physics_loss` hook in `fit`, methods `trunk_shred` / `trunk_shred_pinn` and four search variants.
 Result (wave, clean, 3 seeds): test 0.0255 ± 0.0040 (physics) vs 0.0285 ± 0.0019 (trunk, λ = 0) vs 0.0285 ± 0.0065 (SHRED); wave residual 0.024 vs 0.96; dispersion within 1 % vs 79 %. Over the window both trunk models equal copying the τ = 0 field back (τ = −9 dt: 0.39 vs 0.38) and their û_t is uncorrelated with the truth (rel. error 1.02 / 1.08). No Fourier features: 0.44; λ = 1e-2: 0.129; λ = 1e-4: 0.035. Settings picked on seed-0 test error; validation picks the same.

@@ -1,0 +1,4 @@
+# trunk_shred + the trunk fitted to the probe readings at every lag (clean training only).
+defaults:
+  - trunk_shred
+probe_weight: 1.0           # per probe-lag point, same weight as a grid point of the data loss
