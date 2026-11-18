@@ -23,6 +23,9 @@ METHOD_COLORS = {
     "robust_shred_v2__missing": "#6250d6",
     "shred_mask__missing": "#e34948",
     "gappy_pod__clean": "#7a7974",
+    "shred__clean": "#2a78d6",
+    "trunk_shred__clean": "#1baf7a",
+    "trunk_shred_pinn__clean": "#6250d6",
 }
 CONDITION_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
 BASELINE_CONDITIONS = ("missing_oracle_p0", "missing_oracle_p0.3")

@@ -17,6 +17,12 @@ Conclusion: <what we take from it, or "not written">
 
 ---
 
+## 2026-11-10 · trunk_shred_wave · feat · PR #13 · tentative
+DeepONet-style SHRED with a physics loss, verified on the 1D wave: SHRED GRU branch, tanh trunk over (x, τ) with 16 Fourier frequencies on x, wave residual + Dirichlet BCs on random collocation points (λ = 1e-3). Adds `TrunkSHRED`, `wave_residual`, a `physics_loss` hook in `fit`, methods `trunk_shred` / `trunk_shred_pinn` and four search variants.
+Result (wave, clean, 3 seeds): test 0.0255 ± 0.0040 (physics) vs 0.0285 ± 0.0019 (trunk, λ = 0) vs 0.0285 ± 0.0065 (SHRED); wave residual 0.024 vs 0.96; dispersion within 1 % vs 79 %. Over the window both trunk models equal copying the τ = 0 field back (τ = −9 dt: 0.39 vs 0.38) and their û_t is uncorrelated with the truth (rel. error 1.02 / 1.08). No Fourier features: 0.44; λ = 1e-2: 0.129; λ = 1e-4: 0.035. Settings picked on seed-0 test error; validation picks the same.
+Conclusion: The trunk can be made to satisfy the PDE at no accuracy cost, but the physics adds nothing the model uses: only τ = 0 is supervised, so u_t is free and physics only makes the τ-direction self-consistent. The design (interleaved split, clean data) cannot show a physics benefit. The Fourier basis contains the wave's own modes, so this is the easy case. Lead: supervise the trunk at the probes for all lags, then test block split, noise, faults.
+→ experiments/trunk_shred_wave/README.md, notebooks/trunk_shred_wave.ipynb, docs/protocol.md (Trunk SHRED row), outputs/trunk_shred_wave/wave/ (local only)
+
 ## 2026-11-08 · physical_relation · exp · PR #12 · tentative
 Does reconstruction need a physical relation between probe readings and the field? SHRED, SDN, RobustSHREDv2 (noise training) with real probes, a physically unrelated wave signal, a fixed random series, or real probes with shuffled targets; with and without early stopping. Adds per-run `input` and `early_stopping`, and `train_err` for every trained run.
 Result (test, mean over 3 seeds; mean-field floor 0.328): probes 0.004–0.007; wave input 0.010–0.016 for every method; random input: SHRED 0.07–0.08, SDN memorises without early stopping (train 0.018) but tests at 0.40, v2 at the floor (fits on 1 of 3 seeds without early stopping); shuffled targets at the floor, and not memorised in 1000 epochs either (train 0.25–0.27).

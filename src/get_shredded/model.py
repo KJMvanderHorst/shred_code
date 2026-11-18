@@ -13,6 +13,8 @@ from .senseiver import Senseiver, SenseiverSDN, spatial_positional_encoding
 __all__ = [
     "SHRED",
     "SDN",
+    "TrunkSHRED",
+    "wave_residual",
     "TimeSeriesDataset",
     "fit",
     "forecast",
@@ -99,6 +101,93 @@ class SHRED(nn.Module):
         return self.linear3(out)
 
 
+def wave_residual(u: torch.Tensor, x: torch.Tensor, t: torch.Tensor, c: float) -> torch.Tensor:
+    """u_tt - c^2 u_xx by autograd; u[j] must depend on x[j], t[j] only (pointwise queries)."""
+    u_x, u_t = torch.autograd.grad(u, (x, t), torch.ones_like(u), create_graph=True)
+    u_xx = torch.autograd.grad(u_x, x, torch.ones_like(u_x), create_graph=True)[0]
+    u_tt = torch.autograd.grad(u_t, t, torch.ones_like(u_t), create_graph=True)[0]
+    return u_tt - c**2 * u_xx
+
+
+class TrunkSHRED(SHRED):
+    """DeepONet-style SHRED for the 1D wave: the SHRED recurrent encoder is the branch
+    (window -> b in R^p), a tanh MLP over (x, tau) is the trunk, u(x, tau) = b . T(x, tau) + bias.
+    tau is time relative to the window's last frame (tau in [-(lags-1) dt, 0]).
+
+    ``forward`` returns the field at the grid x and tau = 0, MinMax-scaled like SHRED's targets
+    (u * out_scale + out_offset), so training, validation and metrics are unchanged. The model
+    itself works in physical units, so ``physics_loss`` (wave residual + Dirichlet BCs on random
+    collocation points, weighted by ``physics_weight``) uses true derivatives.
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        x_grid,
+        out_scale,
+        out_offset,
+        c: float,
+        L: float,
+        dt: float,
+        lags: int,
+        hidden_size: int = 64,
+        hidden_layers: int = 2,
+        recurrent_cell: str = "gru",
+        p: int = 64,
+        trunk_width: int = 64,
+        trunk_layers: int = 2,
+        physics_weight: float = 0.0,
+        n_colloc: int = 64,
+        num_frequencies: int = 0,
+    ) -> None:
+        super().__init__(input_size, 1, hidden_size=hidden_size, hidden_layers=hidden_layers, l1=1, l2=1,
+                         recurrent_cell=recurrent_cell)
+        del self.linear1, self.linear2, self.linear3, self.dropout  # replaced by branch + trunk
+        self.branch = nn.Linear(hidden_size, p)
+        self.num_frequencies = int(num_frequencies)  # Fourier features of x (0: raw x) against spectral bias
+        layers, width = [], 1 + (2 * self.num_frequencies if self.num_frequencies > 0 else 1)
+        for _ in range(trunk_layers):
+            layers += [nn.Linear(width, trunk_width), nn.Tanh()]  # smooth: ReLU has zero 2nd derivative
+            width = trunk_width
+        self.trunk = nn.Sequential(*layers, nn.Linear(width, p))
+        self.bias = nn.Parameter(torch.zeros(1))
+        self.register_buffer("x_grid", torch.as_tensor(x_grid, dtype=torch.float32))
+        self.register_buffer("out_scale", torch.as_tensor(out_scale, dtype=torch.float32))
+        self.register_buffer("out_offset", torch.as_tensor(out_offset, dtype=torch.float32))
+        self.c, self.L = float(c), float(L)
+        self.tau_span = max(int(lags) - 1, 1) * float(dt)
+        self.physics_weight = float(physics_weight)
+        self.n_colloc = int(n_colloc)
+
+    def field(self, b: torch.Tensor, x: torch.Tensor, tau: torch.Tensor) -> torch.Tensor:
+        """Physical u at (x, tau): b (B, p); x, tau (Q,) or (B, Q). Returns (B, Q)."""
+        x = (x / self.L).unsqueeze(-1)
+        if self.num_frequencies > 0:
+            x = spatial_positional_encoding(x, self.num_frequencies)
+        T = self.trunk(torch.cat([x, (tau / self.tau_span).unsqueeze(-1)], dim=-1))
+        return (b.unsqueeze(1) * T).sum(-1) + self.bias
+
+    def coefficients(self, x: torch.Tensor) -> torch.Tensor:
+        return self.branch(self.latent(x))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        u = self.field(self.coefficients(x), self.x_grid, torch.zeros_like(self.x_grid))
+        return u * self.out_scale + self.out_offset
+
+    def physics_loss(self, x: torch.Tensor) -> torch.Tensor:
+        if self.physics_weight == 0.0:
+            return x.new_zeros(())
+        b = self.coefficients(x)
+        shape = (x.shape[0], self.n_colloc)
+        xs = (torch.rand(shape, device=x.device) * self.L).requires_grad_()
+        ts = (-torch.rand(shape, device=x.device) * self.tau_span).requires_grad_()
+        omega1 = torch.pi * self.c / self.L  # residual / omega1^2 is O(1) per unit amplitude
+        residual = wave_residual(self.field(b, xs, ts), xs, ts, self.c) / omega1**2
+        xb = torch.randint(0, 2, shape, device=x.device).float() * self.L
+        boundary = self.field(b, xb, -torch.rand(shape, device=x.device) * self.tau_span)
+        return self.physics_weight * (residual.square().mean() + boundary.square().mean())
+
+
 class SDN(nn.Module):
     """Static Shallow Decoder Network: 3-layer FC mapping a single snapshot of
     sensor measurements to the full state. Used as a non-temporal ablation."""
@@ -166,6 +255,8 @@ def fit(
                 batch_x = augment_fn(batch_x)
             optimizer.zero_grad()
             loss = criterion(model(batch_x), batch_y)
+            if hasattr(model, "physics_loss"):
+                loss = loss + model.physics_loss(batch_x)
             loss.backward()
             optimizer.step()
             epoch_loss += float(loss.item())

@@ -1,0 +1,13 @@
+# DeepONet-style SHRED, 1D wave only: SHRED GRU branch -> p coefficients; tanh trunk over (x, tau in the lag window).
+# physics_weight 0: data loss only (architecture effect). See trunk_shred_pinn for the physics loss.
+kind: trunk_shred
+mask_input: false
+recurrent_cell: gru
+hidden_size: 64
+hidden_layers: 2
+p: 64
+trunk_width: 64
+trunk_layers: 2
+num_frequencies: 16        # Fourier features sin/cos(k pi x/L), k = 1..n, on the trunk's x input; 0 = raw x (spectral bias: 0.69 vs 0.09 at 200 epochs)
+physics_weight: 0.0
+n_colloc: 64                # random (x, tau) collocation points per sample per batch

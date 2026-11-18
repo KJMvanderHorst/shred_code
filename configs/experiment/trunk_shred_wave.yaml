@@ -1,0 +1,17 @@
+# @package _global_
+# Does the DeepONet-style trunk SHRED train on the 1D wave, and what does the physics loss change?
+# Wave only (trunk_shred raises on other data). record: experiments/trunk_shred_wave/README.md
+#   uv run python scripts/run.py +experiment=trunk_shred_wave data=wave
+name: trunk_shred_wave
+runs:
+  - {method: shred, train: clean}
+  - {method: trunk_shred, train: clean}
+  - {method: trunk_shred_pinn, train: clean}
+  # search that set the defaults: Fourier features on x (0 / 8 / 16) and physics weight (1e-2 / 1e-3 / 1e-4)
+  - {method: trunk_shred_noff, train: clean}
+  - {method: trunk_shred_ff8, train: clean}
+  - {method: trunk_shred_pinn_strong, train: clean}
+  - {method: trunk_shred_pinn_weak, train: clean}
+eval:
+  conditions:
+    - {corruption: clean, flags: oracle, ps: [0.0]}
