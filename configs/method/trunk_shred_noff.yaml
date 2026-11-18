@@ -1,0 +1,4 @@
+# Search variant: trunk_shred without Fourier features (raw x into the trunk).
+defaults:
+  - trunk_shred
+num_frequencies: 0

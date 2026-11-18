@@ -1,0 +1,4 @@
+# trunk_shred + physics loss: (u_tt - c^2 u_xx) / omega_1^2 and u(0) = u(L) = 0 on random collocation points.
+defaults:
+  - trunk_shred
+physics_weight: 1.0e-3        # 1e-2 collapses toward u = 0, 1e-4 leaves the residual at ~11 % (wave, seed 0)

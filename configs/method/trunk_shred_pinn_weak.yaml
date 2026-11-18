@@ -1,0 +1,4 @@
+# Search variant: trunk_shred_pinn with a 10x weaker physics weight.
+defaults:
+  - trunk_shred_pinn
+physics_weight: 1.0e-4

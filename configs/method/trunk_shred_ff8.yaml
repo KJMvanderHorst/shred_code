@@ -1,0 +1,4 @@
+# Search variant: trunk_shred with 8 instead of 16 Fourier frequencies.
+defaults:
+  - trunk_shred
+num_frequencies: 8
