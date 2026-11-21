@@ -1,0 +1,4 @@
+# Search variant: flow_trunk_shred_div with a 10x stronger continuity weight.
+defaults:
+  - flow_trunk_shred_div
+physics_weight: 1.0e-2

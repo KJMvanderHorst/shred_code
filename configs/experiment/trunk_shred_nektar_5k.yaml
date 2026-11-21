@@ -1,0 +1,21 @@
+# @package _global_
+# Regime B of trunk_shred_nektar: the same question with 5000 epochs for every run, SHRED included, because the
+# trunk trains much slower (seed-0 diagnostic: still improving at 5000 epochs). Early stopping is off: with it on
+# (first attempt, 2026-11-21) the trunk's validation spikes ended every run after 440-880 epochs. Without early
+# stopping `fit` keeps the last-epoch weights. record: experiments/trunk_shred_nektar/README.md
+#   uv run python scripts/run.py +experiment=trunk_shred_nektar_5k
+name: trunk_shred_nektar_5k
+train:
+  epochs: 5000
+runs:
+  - {method: shred, train: clean, early_stopping: false}
+  - {method: flow_trunk_shred_w256, train: clean, early_stopping: false}           # trunk: width 256, p 128, fixed lr 1e-3
+  - {method: flow_trunk_shred_w256_cos_lr3, train: clean, early_stopping: false}   # same trunk, cosine lr from 3e-3
+  - {method: flow_trunk_shred_div_weak, train: clean, early_stopping: false}       # cosine trunk + continuity, lambda 1e-4
+  - {method: flow_trunk_shred_div, train: clean, early_stopping: false}            # lambda 1e-3
+  - {method: flow_trunk_shred_div_strong, train: clean, early_stopping: false}     # lambda 1e-2
+# First attempt (early stopping on, all runs stopped before 900 epochs) is kept in outputs/trunk_shred_nektar_5k under
+# the run names without the __nostop suffix; notebooks/trunk_shred_nektar.ipynb, section 6.
+eval:
+  conditions:
+    - {corruption: clean, flags: oracle, ps: [0.0]}

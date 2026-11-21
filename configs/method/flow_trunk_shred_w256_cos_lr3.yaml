@@ -1,0 +1,4 @@
+# Search variant: flow_trunk_shred_w256_cos starting from lr 3e-3 (overrides train.lr for this method only).
+defaults:
+  - flow_trunk_shred_w256_cos
+lr: 3.0e-3

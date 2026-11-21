@@ -14,6 +14,8 @@ __all__ = [
     "SHRED",
     "SDN",
     "TrunkSHRED",
+    "FlowTrunkSHRED",
+    "divergence",
     "wave_residual",
     "TimeSeriesDataset",
     "fit",
@@ -213,6 +215,80 @@ class TrunkSHRED(SHRED):
         return loss + self.physics_weight * (residual.square().mean() + boundary.square().mean())
 
 
+def divergence(u: torch.Tensor, v: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
+    """u_x + v_y by autograd; xy (..., 2) with u[j], v[j] depending on xy[j] only (pointwise queries)."""
+    u_x = torch.autograd.grad(u, xy, torch.ones_like(u), create_graph=True)[0][..., 0]
+    v_y = torch.autograd.grad(v, xy, torch.ones_like(v), create_graph=True)[0][..., 1]
+    return u_x + v_y
+
+
+class FlowTrunkSHRED(SHRED):
+    """DeepONet-style SHRED for the Nektar (u, v) wake: SHRED recurrent branch (window -> b in R^{2 x p}),
+    tanh trunk over Fourier features of (x, y) -> one basis per channel; u_c(x, y) = b_c . T_c(x, y) + bias_c.
+    No time input: only the last frame is supervised. ``forward`` returns [u block; v block] at the grid,
+    MinMax-scaled like SHRED's targets. ``aux_loss`` = ``physics_weight`` x mean (u_x + v_y)^2 on random points
+    in the grid's bounding box, in physical units.
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        coords,
+        out_scale,
+        out_offset,
+        hidden_size: int = 64,
+        hidden_layers: int = 2,
+        recurrent_cell: str = "gru",
+        p: int = 64,
+        trunk_width: int = 64,
+        trunk_layers: int = 2,
+        num_frequencies: int = 16,
+        physics_weight: float = 0.0,
+        n_colloc: int = 64,
+    ) -> None:
+        super().__init__(input_size, 1, hidden_size=hidden_size, hidden_layers=hidden_layers, l1=1, l2=1,
+                         recurrent_cell=recurrent_cell)
+        del self.linear1, self.linear2, self.linear3, self.dropout  # replaced by branch + trunk
+        self.p, self.num_frequencies = int(p), int(num_frequencies)
+        self.branch = nn.Linear(hidden_size, 2 * self.p)
+        layers, width = [], 2 * (2 * self.num_frequencies if self.num_frequencies > 0 else 1)
+        for _ in range(trunk_layers):
+            layers += [nn.Linear(width, trunk_width), nn.Tanh()]
+            width = trunk_width
+        self.trunk = nn.Sequential(*layers, nn.Linear(width, 2 * self.p))
+        self.bias = nn.Parameter(torch.zeros(2))
+        coords = torch.as_tensor(coords, dtype=torch.float32)
+        self.register_buffer("coords", coords)
+        self.register_buffer("lo", coords.min(0).values)
+        self.register_buffer("span", coords.max(0).values - coords.min(0).values)
+        self.register_buffer("out_scale", torch.as_tensor(out_scale, dtype=torch.float32))
+        self.register_buffer("out_offset", torch.as_tensor(out_offset, dtype=torch.float32))
+        self.physics_weight = float(physics_weight)
+        self.n_colloc = int(n_colloc)
+
+    def basis(self, xy: torch.Tensor) -> torch.Tensor:
+        """Trunk at physical (..., 2) points -> (..., 2, p)."""
+        z = (xy - self.lo) / self.span
+        if self.num_frequencies > 0:
+            z = spatial_positional_encoding(z, self.num_frequencies)
+        return self.trunk(z).unflatten(-1, (2, self.p))
+
+    def coefficients(self, x: torch.Tensor) -> torch.Tensor:
+        return self.branch(self.latent(x)).unflatten(-1, (2, self.p))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        uv = torch.einsum("bcp,qcp->bcq", self.coefficients(x), self.basis(self.coords)) + self.bias[:, None]
+        return uv.flatten(1) * self.out_scale + self.out_offset  # state order [u block; v block]
+
+    def aux_loss(self, x: torch.Tensor) -> torch.Tensor:
+        if self.physics_weight == 0.0:
+            return x.new_zeros(())
+        b = self.coefficients(x)
+        xy = (self.lo + torch.rand(x.shape[0], self.n_colloc, 2, device=x.device) * self.span).requires_grad_()
+        uv = torch.einsum("bcp,bqcp->bqc", b, self.basis(xy)) + self.bias
+        return self.physics_weight * divergence(uv[..., 0], uv[..., 1], xy).square().mean()
+
+
 class SDN(nn.Module):
     """Static Shallow Decoder Network: 3-layer FC mapping a single snapshot of
     sensor measurements to the full state. Used as a non-temporal ablation."""
@@ -248,16 +324,21 @@ def fit(
     patience: int = 5,
     augment_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
     early_stopping: bool = True,
+    lr_schedule: str = "none",
 ) -> torch.Tensor:
     """Training loop matching the paper: Adam + MSE, validation on relative
     L2 error every 20 epochs, early stopping on patience, restores best params.
     early_stopping=False trains all epochs and keeps the final params.
 
     augment_fn is applied to each training batch only (not validation/test).
+    lr_schedule "cosine" decays lr to 0 over num_epochs (stepped per epoch); "none" keeps lr fixed.
     """
     train_loader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size)
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    if lr_schedule not in ("none", "cosine"):
+        raise ValueError(f"lr_schedule must be 'none' or 'cosine', got {lr_schedule!r}")
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, num_epochs) if lr_schedule == "cosine" else None
 
     val_error_list: list[torch.Tensor] = []
     patience_counter = 0
@@ -287,6 +368,8 @@ def fit(
             epoch_loss += float(loss.item())
             n_batches += 1
         train_loss = epoch_loss / max(n_batches, 1)
+        if scheduler is not None:
+            scheduler.step()
         pbar.set_postfix(loss=f"{train_loss:.4e}", val=f"{last_val:.4f}",
                          best=f"{best_so_far:.4f}", patience=f"{patience_counter}/{patience}")
 

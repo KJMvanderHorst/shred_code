@@ -52,13 +52,13 @@ from .data import (
     qr_place_probes,
     split_window_indices,
 )
-from .model import SDN, SHRED, TimeSeriesDataset, TrunkSHRED, fit
+from .model import SDN, SHRED, FlowTrunkSHRED, TimeSeriesDataset, TrunkSHRED, fit
 from .robust_shred import RobustSHREDv1, RobustSHREDv2
 from .senseiver import SenseiverSDN
 from .wave_data import wave_point_coordinates
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-LATENT_KINDS = ("shred", "trunk_shred", "senseiver_sdn", "robust_v1", "robust_v2")
+LATENT_KINDS = ("shred", "trunk_shred", "flow_trunk_shred", "senseiver_sdn", "robust_v1", "robust_v2")
 
 
 def load_config(overrides: list[str] | None = None, config_name: str = "config"):
@@ -381,6 +381,16 @@ def _build_model(sd: SeedData, method, device: str, data=None) -> torch.nn.Modul
             num_frequencies=int(method.num_frequencies),
             probe_idx=sd.locations, probe_weight=float(method.get("probe_weight", 0.0)),
         )
+    elif kind == "flow_trunk_shred":
+        if data is None or str(data.source) != "nektar" or c != 2:
+            raise ValueError("flow_trunk_shred needs Nektar u, v data (continuity is a 2D (u, v) constraint)")
+        model = FlowTrunkSHRED(
+            c * n, sd.point_coordinates, sd.scaler.scale_, sd.scaler.min_, hidden_size=int(method.hidden_size),
+            hidden_layers=int(method.hidden_layers), recurrent_cell=str(method.recurrent_cell), p=int(method.p),
+            trunk_width=int(method.trunk_width), trunk_layers=int(method.trunk_layers),
+            num_frequencies=int(method.num_frequencies), physics_weight=float(method.physics_weight),
+            n_colloc=int(method.n_colloc),
+        )
     elif kind == "sdn":
         model = SDN(c * n, m, l1=int(method.l1), l2=int(method.l2), dropout=float(method.dropout))
     elif kind == "senseiver_sdn":
@@ -551,9 +561,9 @@ def _train_and_evaluate(cfg, sd: SeedData, run, device: str) -> tuple[dict, dict
         model,
         TimeSeriesDataset(torch.tensor(train_x, device=device), targets(sd.train_idx)),
         TimeSeriesDataset(torch.tensor(valid_x, device=device), targets(sd.valid_idx)),
-        batch_size=int(cfg.train.batch_size), num_epochs=int(cfg.train.epochs), lr=float(cfg.train.lr),
+        batch_size=int(cfg.train.batch_size), num_epochs=int(cfg.train.epochs), lr=float(method.get("lr", cfg.train.lr)),
         verbose=False, patience=int(cfg.train.patience), augment_fn=augment,
-        early_stopping=bool(run.get("early_stopping", True)),
+        early_stopping=bool(run.get("early_stopping", True)), lr_schedule=str(method.get("lr_schedule", "none")),
     )
     model.eval()
     test_windows = sd.windows[sd.test_idx]
