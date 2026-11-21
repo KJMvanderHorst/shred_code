@@ -74,7 +74,9 @@ def _abs(path: str | Path) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
-def _device() -> str:
+def _device(pref: str = "auto") -> str:
+    if pref != "auto":
+        return pref
     if torch.cuda.is_available():
         return "cuda"
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
@@ -608,7 +610,7 @@ def save_seed_info(sd: SeedData, out_dir: Path, panel_windows: int) -> None:
 def run_all(cfg) -> list[dict[str, Any]]:
     """Run (or skip if cached) every run x seed; one compact JSON line per run."""
     root = output_root(cfg)
-    device = _device()
+    device = _device(str(cfg.get("device", "auto")))
     runs = list(cfg.runs)
     if not runs:
         raise ValueError("cfg.runs is empty; select an experiment with +experiment=<name>")

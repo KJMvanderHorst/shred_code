@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.io import savemat
 
-from get_shredded.runner import load_arrays, load_config, load_results, masked_invariance_check, output_root, run_all
+from get_shredded.runner import _device, load_arrays, load_config, load_results, masked_invariance_check, output_root, run_all
 from get_shredded.wave_data import WaveGeneratorConfig, generate_wave_dataset
 
 RUNS = [
@@ -112,3 +112,8 @@ def test_train_error_recorded(tmp_path: Path) -> None:
     run_all(cfg)
     metrics = load_results(output_root(cfg))[("sdn__noise", 0)]["metrics"]
     assert np.isfinite(metrics["train"]["err"])
+
+
+def test_device_override():
+    assert _device("cpu") == "cpu"
+    assert _device("auto") in ("cuda", "mps", "cpu")

@@ -17,6 +17,12 @@ Conclusion: <what we take from it, or "not written">
 
 ---
 
+## 2026-11-21 · speed_benchmark · exp · PR #<n> · tentative
+Which device / parallelism trains fastest on the M1 Pro? Adds a `device` key (default `auto` = MPS, unchanged) and times 18 runs (shred, flow_trunk_shred_w256, flow_trunk_shred_div; 100 fixed epochs) under 9 setups, 2 repeats.
+Result: one MPS job (what we used so far) 4.6 runs/min; 6 CPU jobs × 1 thread 20.4 (4.5×); hybrid 2 MPS + 4 CPU jobs 21.5 (4.7×). A single CPU job (6 threads) also beats MPS (shred 4.1 vs 8.0 s). Test error is the same across repeats per device but differs between devices (shred 0.0104 CPU vs 0.0086 MPS at 100 epochs).
+Conclusion: The models are too small for the GPU; run sweeps as ~6 single-thread CPU jobs (split by seed). Do not mix devices within one comparison.
+→ experiments/speed_benchmark/README.md, notebooks/speed_benchmark.ipynb, docs/protocol.md (Device row), outputs/speed_benchmark/ (local only)
+
 ## 2026-11-18 · trunk_shred_wave (probe supervision) · exp · PR #14 · tentative
 Part 1 left u_t unsupervised. Fit the trunk also to the probe readings at every lag (the model's own clean input, μ = 1), for λ = 0 / 1e-4 / 1e-3 / 1e-2; adds `probe_weight` and `aux_loss` (renamed from `physics_loss`) to `TrunkSHRED`.
 Result (wave, clean, 3 seeds): τ = 0 test 0.0432 ± 0.0103 (no physics) and 0.0354 ± 0.0083 (λ = 1e-3) vs 0.0285 / 0.0255 without probe supervision. û_t at the probes improves (0.38 / 0.26 vs ≈ 1.0) but between them gets worse than predicting no motion (1.44 / 1.27); window error 0.284 / 0.263 vs 0.220, above the copy-back baseline (≈ 0.21). QR probes sit in two clusters (gaps up to 0.85) while a wave travels ≈ 0.07 per window.

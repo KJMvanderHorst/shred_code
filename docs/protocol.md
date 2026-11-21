@@ -46,6 +46,7 @@ All results so far are **tentative**: the protocol is still being settled.
 | Choice | Config key | Default | Rationale | Caveat |
 |---|---|---|---|---|
 | Training | `train.*` | Adam, lr 1e-3, batch 64, MSE, up to 1000 epochs | SHRED paper setting | |
+| Device | `device` | `auto`: cuda, else mps, else cpu (MPS on the M1 Pro) | Lets runs move to CPU when that is faster | Not in the run fingerprint; CPU and MPS results agree only up to floating-point differences |
 | Per-method lr and schedule | `methods.*.lr`, `methods.*.lr_schedule` | Off: every method uses `train.lr`, fixed (`lr_schedule: none`) | Lets a slow-training method (Nektar trunk) use a higher start with decay without changing other methods | `cosine` decays lr to 0 over `train.epochs`, stepped per epoch, so early stopping can end a run before lr is small. Only the `flow_trunk_shred*cos*` variants set them |
 | Early stopping | `train.patience`, `runs[].early_stopping` | Validation relative L2 every 20 epochs, patience 5, best weights restored | | `early_stopping: false` (decoupling tests only) trains all epochs and keeps the final weights |
 | Gappy POD | `methods.gappy_pod.clip` | Least squares on the leading `sensors.rank` modes, clipped to the per-pixel training range | Linear baseline | Not trained; the run's train corruption is ignored |
