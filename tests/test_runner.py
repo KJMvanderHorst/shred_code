@@ -15,7 +15,7 @@ RUNS = [
 CONDITIONS = ("[{corruption:missing,flags:oracle,ps:[0.0,0.3]},{corruption:garbage,flags:silent,ps:[0.3]},"
               "{corruption:missing,flags:oracle,ks:all}]")
 SMALL = ["data.lags=3", "train.epochs=2", "sensors.num=3", "sensors.rank=6", "eval.seeds=[0]",
-         "eval.draws=2", "eval.panel_windows=2", "verbose=true"]
+         "eval.draws=2", "eval.panel_windows=2", "verbose=true", "jobs=1"]
 
 
 def _write_random_nektar(path: Path, nx: int = 6, ny: int = 4, nt: int = 40) -> None:
@@ -117,3 +117,16 @@ def test_train_error_recorded(tmp_path: Path) -> None:
 def test_device_override():
     assert _device("cpu") == "cpu"
     assert _device("auto") in ("cuda", "mps", "cpu")
+
+
+def test_parallel_matches_serial(tmp_path: Path, capsys) -> None:
+    data = tmp_path / "wave.npz"
+    generate_wave_dataset(WaveGeneratorConfig(num_trajectories=1, nx=32, nt=40, num_modes=4), output_path=data)
+    runs = [("shred", "missing"), ("sdn", "noise")]
+    extra = ["data=wave", f"data.file={data}", "device=cpu", "eval.seeds=[0,1]"]
+    serial = run_all(_cfg(tmp_path / "serial", runs, extra))
+    cfg = _cfg(tmp_path / "parallel", runs, [*extra, "jobs=2"])
+    parallel = run_all(cfg)
+    assert [(r["run"], r["seed"], r["status"]) for r in parallel] == [(r["run"], r["seed"], r["status"]) for r in serial]
+    assert all(abs(a["clean"] - b["clean"]) < 1e-6 for a, b in zip(serial, parallel))
+    assert json.loads((output_root(cfg) / "summary.json").read_text())["missing"] == []

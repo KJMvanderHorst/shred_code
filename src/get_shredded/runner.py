@@ -23,8 +23,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import multiprocessing
+import os
 import subprocess
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -597,20 +600,81 @@ def save_seed_info(sd: SeedData, out_dir: Path, panel_windows: int) -> None:
         return
     out_dir.mkdir(parents=True, exist_ok=True)
     panel = np.arange(min(panel_windows, len(sd.test_idx)))
+    tmp = path.with_name(f"seed_info.{os.getpid()}.tmp.npz")  # parallel workers may write the same seed
     np.savez_compressed(
-        path,
+        tmp,
         locations=sd.locations, state_indices=sd.state_indices, sensor_coordinates=sd.sensor_coordinates,
         point_coordinates=sd.point_coordinates, nx=sd.nx, ny=sd.ny, n_points=sd.n_points, channels=sd.channels,
         sigma=sd.sigma, train_idx=sd.train_idx, valid_idx=sd.valid_idx, test_idx=sd.test_idx,
         test_noise=sd.test_noise, **{f"test_mask_{severity}": mask for severity, mask in sd.test_mask.items()},
         panel_truth=sd.truth[panel].astype(np.float32), panel_windows=panel,
     )
+    os.replace(tmp, path)
+
+
+def _run_one(cfg, run, seed: int, sds: dict, device: str) -> dict[str, Any]:
+    """Train, evaluate and save one (run, seed); returns its one-line record. sds caches SeedData per input."""
+    root = output_root(cfg)
+    name = run_name(run)
+    config = run_config(cfg, run, seed)
+    config_id = _stable_config_fingerprint(config)
+    out_dir = root / f"seed{seed}" / name
+    if sds.get("seed") != seed:  # keep one seed's data in memory at a time
+        sds.clear()
+        sds["seed"] = seed
+    inp = run_input(run)
+    if inp not in sds:
+        sds[inp] = prepare_seed(cfg, seed, inp)
+        if inp == "probes":
+            save_seed_info(sds[inp], root / f"seed{seed}", int(cfg.eval.panel_windows))
+    sd = sds[inp]
+    started = time.time()
+    payload: dict[str, Any] = {
+        "experiment": str(cfg.name), "run": name, "seed": seed, "config": config,
+        "config_id": config_id, "device": device, "git_commit": _git_commit_short(),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    try:
+        metrics, arrays, model = _train_and_evaluate(cfg, sd, run, device)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(out_dir / "arrays.npz", **arrays)
+        if model is not None:
+            torch.save({k: v.detach().cpu() for k, v in model.state_dict().items()}, out_dir / "model.pt")
+        payload.update(status="completed", metrics=metrics, wall_time_s=round(time.time() - started, 2))
+    except Exception as exc:  # recorded so the sweep continues; failed runs are retried next time
+        payload.update(status="failed", error_summary=f"{type(exc).__name__}: {exc}",
+                       wall_time_s=round(time.time() - started, 2))
+        if bool(cfg.verbose):
+            raise
+    write_result_summary(out_dir / "result.json", payload)
+    record = {"status": payload["status"], "run": name, "seed": seed, "wall_time_s": payload["wall_time_s"]}
+    if payload["status"] == "completed":
+        record.update({k: round(v["err"], 5) for k, v in payload["metrics"].items()
+                       if isinstance(v, dict) and "err" in v})
+    else:
+        record["error"] = payload["error_summary"]
+    return record
+
+
+_WORKER_SEEDS: dict = {}  # per-process SeedData cache of a pool worker
+
+
+def _worker_init(threads: int) -> None:
+    torch.set_num_threads(threads)
+
+
+def _worker_run(cfg, run_index: int, seed: int, device: str) -> dict[str, Any]:
+    return _run_one(cfg, cfg.runs[run_index], seed, _WORKER_SEEDS, device)
 
 
 def run_all(cfg) -> list[dict[str, Any]]:
-    """Run (or skip if cached) every run x seed; one compact JSON line per run."""
+    """Run (or skip if cached) every run x seed; one compact JSON line per run.
+
+    cfg.jobs > 1 trains the pending (seed, run) pairs in that many worker processes with cfg.threads torch
+    threads each; lines print in completion order, the returned records keep the run-set order.
+    """
     root = output_root(cfg)
-    device = _device(str(cfg.get("device", "auto")))
+    device = _device(str(cfg.device))
     runs = list(cfg.runs)
     if not runs:
         raise ValueError("cfg.runs is empty; select an experiment with +experiment=<name>")
@@ -619,54 +683,33 @@ def run_all(cfg) -> list[dict[str, Any]]:
             raise ValueError(f"unknown method or train corruption in run {dict(run)}")
         run_input(run)
     seeds = [int(s) for s in cfg.eval.seeds]
-    records = []
+    records: dict[tuple[int, int], dict[str, Any]] = {}
+    pending = []
     for seed in seeds:
-        sds: dict[str, SeedData] = {}  # one per input variant
-        for run in runs:
-            name = run_name(run)
-            config = run_config(cfg, run, seed)
-            config_id = _stable_config_fingerprint(config)
-            out_dir = root / f"seed{seed}" / name
-            if require_matching_result_summary(out_dir / "result.json", config_id) is not None:
-                record = {"status": "skipped", "run": name, "seed": seed}
-                records.append(record)
-                print(json.dumps(record))
-                continue
-            inp = run_input(run)
-            if inp not in sds:
-                sds[inp] = prepare_seed(cfg, seed, inp)
-                if inp == "probes":
-                    save_seed_info(sds[inp], root / f"seed{seed}", int(cfg.eval.panel_windows))
-            sd = sds[inp]
-            started = time.time()
-            payload: dict[str, Any] = {
-                "experiment": str(cfg.name), "run": name, "seed": seed, "config": config,
-                "config_id": config_id, "device": device, "git_commit": _git_commit_short(),
-                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            }
-            try:
-                metrics, arrays, model = _train_and_evaluate(cfg, sd, run, device)
-                out_dir.mkdir(parents=True, exist_ok=True)
-                np.savez_compressed(out_dir / "arrays.npz", **arrays)
-                if model is not None:
-                    torch.save({k: v.detach().cpu() for k, v in model.state_dict().items()}, out_dir / "model.pt")
-                payload.update(status="completed", metrics=metrics, wall_time_s=round(time.time() - started, 2))
-            except Exception as exc:  # recorded so the sweep continues; failed runs are retried next time
-                payload.update(status="failed", error_summary=f"{type(exc).__name__}: {exc}",
-                               wall_time_s=round(time.time() - started, 2))
-                if bool(cfg.verbose):
-                    raise
-            write_result_summary(out_dir / "result.json", payload)
-            record = {"status": payload["status"], "run": name, "seed": seed, "wall_time_s": payload["wall_time_s"]}
-            if payload["status"] == "completed":
-                record.update({k: round(v["err"], 5) for k, v in payload["metrics"].items()
-                               if isinstance(v, dict) and "err" in v})
+        for i, run in enumerate(runs):
+            config_id = _stable_config_fingerprint(run_config(cfg, run, seed))
+            if require_matching_result_summary(root / f"seed{seed}" / run_name(run) / "result.json",
+                                               config_id) is not None:
+                records[(seed, i)] = {"status": "skipped", "run": run_name(run), "seed": seed}
+                print(json.dumps(records[(seed, i)]))
             else:
-                record["error"] = payload["error_summary"]
-            records.append(record)
-            print(json.dumps(record))
+                pending.append((seed, i))
+    jobs = min(int(cfg.jobs), len(pending))
+    if jobs <= 1:
+        sds: dict = {}
+        for seed, i in pending:
+            records[(seed, i)] = _run_one(cfg, runs[i], seed, sds, device)
+            print(json.dumps(records[(seed, i)]), flush=True)
+    else:
+        ctx = multiprocessing.get_context("spawn")  # fork is unsafe once torch has started threads
+        with ProcessPoolExecutor(jobs, mp_context=ctx, initializer=_worker_init,
+                                 initargs=(int(cfg.threads),)) as pool:
+            futures = {pool.submit(_worker_run, cfg, i, seed, device): (seed, i) for seed, i in pending}
+            for future in as_completed(futures):
+                records[futures[future]] = future.result()
+                print(json.dumps(records[futures[future]]), flush=True)
     write_result_summary(root / "summary.json", build_summary(root, [run_name(r) for r in runs], seeds))
-    return records
+    return [records[(seed, i)] for seed in seeds for i in range(len(runs))]
 
 
 # ---------------------------------------------------------------- loading results

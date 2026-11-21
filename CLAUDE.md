@@ -47,6 +47,8 @@ Agent context is scarce.
   or conditions, and do not design follow-up experiments on your own.
 - Do not rerun a completed configuration unless its config changed or the user asks.
 - Launch once and let it finish; do not poll.
+- run.py trains on 6 CPU worker processes by default (`device`, `jobs`, `threads`); an experiment stays on the
+  device it started on (older ones are pinned to `device: mps`), so devices never mix within a comparison.
 - Read `outputs/<name>/<data>/summary.json` first; open per-run
   `result.json` or `arrays.npz` only when needed. Never print arrays, logs
   or datasets; report metrics and paths concisely.

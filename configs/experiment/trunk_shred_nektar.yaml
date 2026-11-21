@@ -4,6 +4,8 @@
 # Nektar only (flow_trunk_shred raises on other data). record: experiments/trunk_shred_nektar/README.md
 #   uv run python scripts/run.py +experiment=trunk_shred_nektar
 name: trunk_shred_nektar
+device: mps   # pinned: its cached results trained on MPS; never mix devices (speed_benchmark)
+jobs: 3
 runs:
   - {method: shred, train: clean}
   - {method: flow_trunk_shred_w256_cos_lr3, train: clean}   # trunk: width 256, p 128, cosine lr from 3e-3

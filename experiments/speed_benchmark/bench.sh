@@ -16,7 +16,7 @@ uv sync -q  # so uv start-up does not count against the first setup
 jobs() {
   local dev=$1 n=$2 t=$3 setup=$4 rep=$5; shift 5
   printf '%s\n' "$@" | OMP_NUM_THREADS=$t xargs -P "$n" -I{} \
-    uv run python scripts/run.py +experiment=speed_benchmark device="$dev" \
+    uv run python scripts/run.py +experiment=speed_benchmark device="$dev" jobs=1 \
       name="speed_benchmark/$setup/r$rep/job{}" >> "$LOG" 2>&1
 }
 
