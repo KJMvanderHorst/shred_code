@@ -19,6 +19,8 @@ Rows of `docs/protocol.md` this experiment changes, or "none".
 uv run python scripts/run.py +experiment=<name>
 ```
 
+Device: `cpu`, 6 workers (the default since speed_benchmark), unless pinned. Keep one device for the whole experiment.
+
 ## Results
 
 Copied from `outputs/<name>/<data>/summary.json` (mean ± std over seeds).

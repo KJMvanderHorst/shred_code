@@ -1,0 +1,15 @@
+# @package _global_
+# Timing benchmark, not a science result: which device / parallelism finishes runs fastest on this machine.
+# Fixed 100 epochs (no early stopping) so every device does the same work. Driven by
+# experiments/speed_benchmark/bench.sh, which sets name=, device= and OMP_NUM_THREADS per job.
+name: speed_benchmark
+train:
+  epochs: 100
+runs:
+  - {method: shred, train: clean, early_stopping: false}
+  - {method: flow_trunk_shred_w256, train: clean, early_stopping: false}
+  - {method: flow_trunk_shred_div, train: clean, early_stopping: false}   # physics loss: autograd through the trunk
+eval:
+  seeds: [0]
+  conditions:
+    - {corruption: clean, flags: oracle, ps: [0.0]}

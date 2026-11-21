@@ -2,6 +2,8 @@
 # Faulty probes emit garbage instead of dropping out (2026-10-15 meeting follow-up), re-expressed.
 # record: experiments/random_readings/README.md
 name: random_readings
+device: mps   # pinned: its cached results trained on MPS; never mix devices (speed_benchmark)
+jobs: 3
 runs:
   - {method: shred, train: noise}
   - {method: shred, train: missing}

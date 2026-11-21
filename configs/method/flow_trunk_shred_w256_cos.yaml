@@ -1,0 +1,4 @@
+# Search variant: flow_trunk_shred_w256 with cosine lr decay to 0 over train.epochs (against late validation spikes).
+defaults:
+  - flow_trunk_shred_w256
+lr_schedule: cosine

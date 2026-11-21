@@ -2,6 +2,8 @@
 # The 2026-10-14 meeting experiment (noise + dropout robustness), re-expressed.
 # record: experiments/dropout_baseline/README.md
 name: dropout_baseline
+device: mps   # pinned: its cached results trained on MPS; never mix devices (speed_benchmark)
+jobs: 3
 runs:
   - {method: shred, train: noise}
   - {method: shred, train: missing}

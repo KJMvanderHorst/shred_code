@@ -1,0 +1,5 @@
+# Best trunk from the seed-0 search (width 256, p 128, cosine lr from 3e-3) + continuity:
+# lambda x mean (u_x + v_y)^2 on random points in the grid's box (physical units).
+defaults:
+  - flow_trunk_shred_w256_cos_lr3
+physics_weight: 1.0e-3      # wave default; picked on validation over the 1e-2 / 1e-3 / 1e-4 runs

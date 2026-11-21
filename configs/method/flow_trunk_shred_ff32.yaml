@@ -1,0 +1,4 @@
+# Search variant: flow_trunk_shred with 32 instead of 16 Fourier frequencies per axis.
+defaults:
+  - flow_trunk_shred
+num_frequencies: 32

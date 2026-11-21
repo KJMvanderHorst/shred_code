@@ -1,0 +1,13 @@
+# DeepONet-style SHRED for Nektar (u, v): SHRED GRU branch -> 2 x p coefficients; tanh trunk over (x, y), one
+# basis per channel. No time input (only the last frame is supervised). physics_weight 0: data loss only.
+kind: flow_trunk_shred
+mask_input: false
+recurrent_cell: gru
+hidden_size: 64
+hidden_layers: 2
+p: 64
+trunk_width: 64
+trunk_layers: 2
+num_frequencies: 16        # Fourier features sin/cos(k pi z), k = 1..n, on (x, y) scaled to [0, 1] per axis (wave default)
+physics_weight: 0.0
+n_colloc: 64                # random (x, y) collocation points per sample per batch
