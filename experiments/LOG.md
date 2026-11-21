@@ -17,13 +17,13 @@ Conclusion: <what we take from it, or "not written">
 
 ---
 
-## 2026-11-21 · parallel CPU default · feat · PR #<n> · settled
+## 2026-11-21 · parallel CPU default · feat · PR #15 · settled
 `run.py` now trains on CPU in 6 worker processes × 1 torch thread by default (`device: cpu`, `jobs: 6`, `threads: 1`); each worker trains one (seed, run). Experiments that already have MPS results are pinned to `device: mps`, `jobs: 3`.
 Result: parallel and serial give the same test errors (test + Nektar smoke, difference 0.0). Nektar, 6 runs × 100 epochs: 29.6 s with 6 workers vs 47.1 s serial on CPU; the longest run sets the total when there are few runs. Pinned experiments still skip every cached run.
 Conclusion: Use the default for new experiments; never mix devices within one experiment.
 → docs/protocol.md (Device row), configs/config.yaml, src/get_shredded/runner.py (run_all), experiments/speed_benchmark/README.md
 
-## 2026-11-21 · speed_benchmark · exp · PR #<n> · tentative
+## 2026-11-21 · speed_benchmark · exp · PR #15 · tentative
 Which device / parallelism trains fastest on the M1 Pro? Adds a `device` key (default `auto` = MPS, unchanged) and times 18 runs (shred, flow_trunk_shred_w256, flow_trunk_shred_div; 100 fixed epochs) under 9 setups, 2 repeats.
 Result: one MPS job (what we used so far) 4.6 runs/min; 6 CPU jobs × 1 thread 20.4 (4.5×); hybrid 2 MPS + 4 CPU jobs 21.5 (4.7×). A single CPU job (6 threads) also beats MPS (shred 4.1 vs 8.0 s). Test error is the same across repeats per device but differs between devices (shred 0.0104 CPU vs 0.0086 MPS at 100 epochs).
 Conclusion: The models are too small for the GPU; run sweeps as ~6 single-thread CPU jobs (split by seed). Do not mix devices within one comparison.

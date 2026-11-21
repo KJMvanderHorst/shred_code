@@ -1,7 +1,7 @@
 # speed_benchmark
 
 **Status:** tentative
-**Code:** branch `exp/speed-benchmark`, PR #<n>
+**Code:** branch `exp/speed-benchmark`, PR #15 (merge commit `7b441f3`)
 
 ## Question
 
