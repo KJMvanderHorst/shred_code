@@ -17,6 +17,12 @@ Conclusion: <what we take from it, or "not written">
 
 ---
 
+## 2026-11-22 · autoresearch driver · feat · PR #<n> · tentative
+Overnight mode: `scripts/autoresearch.py` (init / run / report / status) alternates stateless `claude -p` planning steps (AUTORESEARCH.md rules, `--restricted`, no shell, edit allowlist) with plain run.py batches (one run.py per trial, ≤ 6 CPU jobs, `eval.split=valid`), in a worktree on `auto/<date>`. Guard on changed paths, experiment-file allowlist, pytest + exact canary on code changes, driver-enforced 3-seed gate, time budget from speed_benchmark priors.
+Result: dry run (wave, 20 epochs, 3 steps, $1.06): intake → one full batch of 6 jobs (2 ideas, incumbent re-measured on 3 seeds) recorded with `device=cpu`, `eval_split=valid` and per-problem ids; an injected edit to configs/config.yaml was caught and reverted; an injected failing test was caught by pytest and reverted; report written. Canary repeats exactly across runs. A direct permission probe: edit of configs/config.yaml and a read of the main checkout's outputs/ denied, auto_*.yaml allowed, no shell.
+Conclusion: Ready for a first real night; validation numbers rank trials only, promotion is a daytime test-split run.
+→ AUTORESEARCH.md, scripts/autoresearch.py, docs/protocol.md (Overnight mode), docs/ideas_template.md, CLAUDE.md (Overnight mode), tests/test_autoresearch.py
+
 ## 2026-11-22 · autoresearch core options · feat · PR #<n> · settled
 Runner options for overnight tuning, all off by default: `eval.split: valid` (evaluate on the validation windows, own RNG stream `[seed, 6]`, test windows never through a model), `methods.*.train_options` (extra `fit` kwargs, validated against `fit`'s signature), `sensors.placement: random | explicit` (stream `[seed, 7]` / `sensors.locations`). Methods can be defined inside an experiment file.
 Result: wave + Nektar 20-epoch smoke runs (7 runs) give identical metrics and config_ids before and after; all 168 cached runs of dropout_baseline, random_readings, physical_relation, trunk_shred_nektar and trunk_shred_wave still match their fingerprints. A poisoning test (test windows set to NaN) shows `eval.split=valid` never touches them.

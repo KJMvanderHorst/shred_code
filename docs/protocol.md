@@ -66,6 +66,12 @@ All results so far are **tentative**: the protocol is still being settled.
 its numbers are for ranking trials only. A promoted candidate is re-run on the test split in daytime mode next to
 its incumbent, both on CPU, before any result is reported.
 
+Within a night a candidate counts as better than its incumbent only on three seeds, with the same problem
+(data, lags, sensors, placement, noise, conditions, draws), when its mean is lower by more than the larger seed
+std and it is lower on every seed; the driver enforces this. Trials may change method hyperparameters, training
+settings (epochs, batch, lr, patience, early stopping, training corruption), `eval.conditions`, `sensors.*`,
+`noise_frac` and `data.lags`; never `data.split`, seeds, `eval.draws`, the evaluation split or the device.
+
 ## Planned, not built
 
 Proposed defaults, to be confirmed before the first experiment that needs them.

@@ -51,6 +51,24 @@ runs:
   - {method: shred_wide, train: missing}
 ```
 
+## Overnight mode
+
+`scripts/autoresearch.py` tunes overnight on the validation split, in a separate git worktree, with short
+stateless Claude calls planning each batch and plain `run.py` runs (6 CPU workers) doing the training. Its rules
+for the agent are in `AUTORESEARCH.md`; you write the ideas (template: `docs/ideas_template.md`).
+
+```
+uv run python scripts/autoresearch.py init --ideas my_ideas.md        # -> ../get-shredded-auto, branch auto/<date>
+cd ../get-shredded-auto
+uv run python scripts/autoresearch.py run --until 07:00 --max-cost-usd 20
+uv run python scripts/autoresearch.py status                          # any time, from another terminal
+```
+
+In the morning read `auto/report.md` (and `auto/results.tsv`, `auto/journal.md`). Numbers are valid-split and
+optimistic; promote a candidate by putting it next to its incumbent in a daytime experiment and running it on the
+test split. Ctrl-C once finishes the current batch and writes the report; `report` reruns only the report.
+`init --dry-run` + `run --dry-run --max-steps 3` tests the wiring on the wave data in `../get-shredded-auto-dry`.
+
 ## Layout
 
 ```
@@ -62,7 +80,8 @@ configs/experiment/       one file per experiment: its runs and conditions
 experiments/LOG.md        lab notebook: every experiment and feature, newest first
 experiments/<name>/       README per experiment: question, run set, results
 docs/protocol.md          every protocol choice, its default and caveats
-scripts/run.py            the only entry point
+scripts/run.py            the only entry point for experiments
+scripts/autoresearch.py   overnight tuning driver (AUTORESEARCH.md)
 src/get_shredded/         data, corruption, models, runner, plots
 notebooks/                analysis of outputs/<name>/<data>/summary.json
 ```
