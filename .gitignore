@@ -36,3 +36,9 @@ src/*.egg-info/
 .python-version
 
 .claude
+
+# Overnight mode (scripts/autoresearch.py), inside auto/* worktrees
+outputs_auto/
+/auto/logs/
+/auto/state.*
+/auto/driver.lock

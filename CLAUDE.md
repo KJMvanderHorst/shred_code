@@ -55,6 +55,13 @@ Agent context is scarce.
 - No per-run plots during sweeps; aggregate plots via `get_shredded.plots`
   in notebooks.
 
+## Overnight mode
+
+Daytime rules above are unchanged. Inside an `auto/*` worktree, in a call started by
+`scripts/autoresearch.py`, `AUTORESEARCH.md` replaces "Run exactly the requested run set" and "do not design
+follow-up experiments", within its scope only; every protocol rule still holds and the test set is never
+evaluated. Interactive sessions never start the driver (`autoresearch.py run`) unless the user asks.
+
 ## Code
 
 - Small, localized changes; keep the Hydra config pattern (no parallel config mechanisms).
