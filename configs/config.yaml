@@ -56,6 +56,7 @@ threads: 1                  # torch threads per worker (jobs > 1 only)
 sensors:
   num: 8
   rank: 16                  # POD rank for block-QR placement and gappy POD (2 x num)
+  # placement: qr | random | explicit (+ locations: [grid points]); unset = qr. Not set here: sensors is fingerprinted
 noise_frac: 0.05            # sigma = noise_frac x per-channel training std (unscaled)
 wave_input:                 # replacement input series for runs with input: wave_input (decoupling test)
   file: data/wave_1d.npz
@@ -69,6 +70,7 @@ train:
 
 eval:
   seeds: [0, 1, 2]
+  split: test               # test | valid: windows to evaluate on (valid: overnight tuning only, see docs/protocol.md)
   draws: 10                 # fixed noise/fault realisations per test window
   panel_windows: 4          # test windows whose reconstructions are stored
   # corruption (a key of `corruptions`) x flags x severity: `ks` = exactly k probes faulty

@@ -22,7 +22,7 @@ All results so far are **tentative**: the protocol is still being settled.
 | Choice | Config key | Default | Rationale | Caveat |
 |---|---|---|---|---|
 | Number of probes | `sensors.num` | 8 | | |
-| Placement | `sensors.rank` | Block QR pivoting over grid points on the rank-16 (= 2N) POD basis of the training data | A probe measures every channel at its point, so pivoting picks whole points; naive stacked QR gave cond ~1e3 | Placement depends on the seed through the training split |
+| Placement | `sensors.rank`, `sensors.placement`, `sensors.locations` | `qr`: block QR pivoting over grid points on the rank-16 (= 2N) POD basis of the training data | A probe measures every channel at its point, so pivoting picks whole points; naive stacked QR gave cond ~1e3 | Placement depends on the seed through the training split. Options (unset = `qr`, not in config.yaml because `sensors` is fingerprinted): `random` = N distinct grid points from stream `[seed, 7]`; `explicit` = the grid points in `sensors.locations`. Gappy POD uses the same rank-`sensors.rank` basis for every placement |
 | Sensor coordinates | — | Physical coordinates rescaled jointly to [0, 1] by the larger span | Positional encodings for the attention models | |
 
 ## Corruption
@@ -40,6 +40,8 @@ All results so far are **tentative**: the protocol is still being settled.
 | Garbage | `corruptions.garbage.garbage_*` | N(0.5, 0.5) per channel per lag, scaled input space | A broken probe emits plausible-range nonsense | |
 | Flags | `corruptions.*.flags`, `eval.conditions[].flags` | `oracle`: models with a mask input get the true fault mask. `silent`: they get an all-zero mask | Separates "fault known" from "fault undetected" | Models without a mask input (SHRED, SDN) behave the same under both. Gappy POD drops faulty rows under `oracle` and uses them under `silent` |
 | Validation | — | Corrupted with the run's own training corruption, one fixed seeded realisation | Early stopping selects for robustness, not clean accuracy | |
+| Evaluation split | `eval.split` | `test`: every metric, per-snapshot error, panel and invariance check uses the test windows | Test results are what we report | `valid` (overnight tuning only) evaluates on the validation windows instead, with its own draws from stream `[seed, 6]`; test windows never pass through a model. The validation set also drives early stopping, so valid-split scores are optimistically biased: fine for ranking trials, never for reporting. Recorded as `eval_split` in result.json / summary.json and in the fingerprint (valid only) |
+| RNG streams | — | `default_rng([seed, i])`: 1 validation noise + training-corruption validation masks, 2 test draws, 3 garbage values, 4 shuffled targets, 5 random input, 6 valid-split eval draws, 7 random placement | Each use has its own stream, so adding one never shifts another | |
 
 ## Training and metrics
 
@@ -48,6 +50,7 @@ All results so far are **tentative**: the protocol is still being settled.
 | Training | `train.*` | Adam, lr 1e-3, batch 64, MSE, up to 1000 epochs | SHRED paper setting | |
 | Device | `device`, `jobs`, `threads` | `cpu`, 6 worker processes × 1 torch thread, one (seed, run) per worker | speed_benchmark: 4.5× the runs/min of one MPS job on the M1 Pro | Not in the run fingerprint; CPU and MPS results differ (shred 0.0104 vs 0.0086 at 100 epochs), so never mix devices within an experiment. Experiments before speed_benchmark are pinned to `device: mps`, `jobs: 3` |
 | Per-method lr and schedule | `methods.*.lr`, `methods.*.lr_schedule` | Off: every method uses `train.lr`, fixed (`lr_schedule: none`) | Lets a slow-training method (Nektar trunk) use a higher start with decay without changing other methods | `cosine` decays lr to 0 over `train.epochs`, stepped per epoch, so early stopping can end a run before lr is small. Only the `flow_trunk_shred*cos*` variants set them |
+| Extra fit options | `methods.*.train_options` | Absent: `fit` gets only the runner's arguments | Lets new off-by-default training options in `model.py` (`fit` keyword arguments) be set per method without editing the runner | Keys must be `fit` parameters the runner does not already set (lr, schedule, epochs, batch, patience, early stopping have their own keys); unknown keys raise. Part of the method dict, so fingerprinted |
 | Early stopping | `train.patience`, `runs[].early_stopping` | Validation relative L2 every 20 epochs, patience 5, best weights restored | | `early_stopping: false` (decoupling tests only) trains all epochs and keeps the final weights |
 | Gappy POD | `methods.gappy_pod.clip` | Least squares on the leading `sensors.rank` modes, clipped to the per-pixel training range | Linear baseline | Not trained; the run's train corruption is ignored |
 | Trunk SHRED (wave only) | `methods.trunk_shred*` | SHRED GRU branch → p = 64 coefficients; tanh trunk (2 × 64) over (x, τ), τ = time relative to the window's last frame, x through 16 Fourier frequencies. Output at the grid x and τ = 0, MinMax-scaled inside the model, so the target, loss and metrics equal SHRED's. `trunk_shred_pinn` adds λ = 1e-3 × (mean ((u_ττ − c²u_xx)/ω₁²)² + mean u(0 or L, τ)²) on 64 random (x, τ) points per sample, in physical units | DeepONet-style decoder whose derivatives give a PDE residual; the wave solution is exactly a 20-function trunk | λ and the frequency count were chosen on the wave by seed-0 test error; validation over 3 seeds picks the same (`experiments/trunk_shred_wave`). The Fourier features sin(kπx/L) include the wave's own spatial modes. Only τ = 0 is supervised, so u_t is unconstrained: the field at earlier τ is no better than copying τ = 0 back, with or without physics. `*_probes` variants add μ = 1 × mean over probes and lags of (scaled û(x_probe, τ_j) − reading)², the model's own input, so clean training only (the runner refuses noise or faults). Raises on data other than the wave |
@@ -55,6 +58,13 @@ All results so far are **tentative**: the protocol is still being settled.
 | Error metric | — | Relative L2 over all test snapshots in unscaled units (`err`), also per channel (`err_u`, `err_v`) and per snapshot | | |
 | Training error | — | Relative L2 on the clean (noise-free) training windows, unscaled (`train_err`); trained models only | Separates memorisation from generalisation | Recorded from `physical_relation` on; earlier runs lack it |
 | Invariance | — | `d_latent`, `d_recon`: relative change of latent and reconstruction from clean to corrupted input | Tests whether models ignore faulty probes | |
+
+## Overnight mode
+
+`scripts/autoresearch.py` tunes on the validation split in a separate worktree (branch `auto/<date>`, outputs in
+`outputs_auto/`); its rules are in `AUTORESEARCH.md`. It always forces `eval.split=valid` and `device=cpu`, so
+its numbers are for ranking trials only. A promoted candidate is re-run on the test split in daytime mode next to
+its incumbent, both on CPU, before any result is reported.
 
 ## Planned, not built
 

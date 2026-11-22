@@ -17,6 +17,12 @@ Conclusion: <what we take from it, or "not written">
 
 ---
 
+## 2026-11-22 · autoresearch core options · feat · PR #<n> · settled
+Runner options for overnight tuning, all off by default: `eval.split: valid` (evaluate on the validation windows, own RNG stream `[seed, 6]`, test windows never through a model), `methods.*.train_options` (extra `fit` kwargs, validated against `fit`'s signature), `sensors.placement: random | explicit` (stream `[seed, 7]` / `sensors.locations`). Methods can be defined inside an experiment file.
+Result: wave + Nektar 20-epoch smoke runs (7 runs) give identical metrics and config_ids before and after; all 168 cached runs of dropout_baseline, random_readings, physical_relation, trunk_shred_nektar and trunk_shred_wave still match their fingerprints. A poisoning test (test windows set to NaN) shows `eval.split=valid` never touches them.
+Conclusion: Daytime mode is unchanged; valid-split scores are optimistically biased (validation also drives early stopping) and are for ranking only.
+→ docs/protocol.md (Evaluation split, RNG streams, Extra fit options, Placement rows, Overnight mode), src/get_shredded/runner.py, tests/test_core_options.py
+
 ## 2026-11-21 · parallel CPU default · feat · PR #15 · settled
 `run.py` now trains on CPU in 6 worker processes × 1 torch thread by default (`device: cpu`, `jobs: 6`, `threads: 1`); each worker trains one (seed, run). Experiments that already have MPS results are pinned to `device: mps`, `jobs: 3`.
 Result: parallel and serial give the same test errors (test + Nektar smoke, difference 0.0). Nektar, 6 runs × 100 epochs: 29.6 s with 6 workers vs 47.1 s serial on CPU; the longest run sets the total when there are few runs. Pinned experiments still skip every cached run.
