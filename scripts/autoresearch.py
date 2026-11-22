@@ -109,7 +109,8 @@ INTAKE_SCHEMA = {
 REPORT_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["written"],
                  "properties": {"written": {"type": "boolean"}}}
 
-RULES = "Before anything else, Read AUTORESEARCH.md (your rules; they override this prompt where they differ) and CLAUDE.md."
+RULES = ("Before anything else, Read AUTORESEARCH.md (your rules; they override this prompt where they differ) and "
+         "CLAUDE.md.\nThe driver forces these settings on every trial, after your experiment file: {forced}.")
 INTAKE_PROMPT = """You are the overnight tuning agent for get-shredded. This is the intake call of the night.
 {rules}
 Read auto/ideas.md and follow AUTORESEARCH.md "Intake": write auto/plan.md. The job slots per batch are {workers};
@@ -241,7 +242,8 @@ def commit(wt: Path, message: str) -> None:
     sh(["git", "add", "-A"], wt)
     if sh(["git", "diff", "--cached", "--quiet"], wt, check=False).returncode == 0:
         return
-    message = "auto: " + " ".join(message.split())[:200]
+    message = " ".join(message.split())
+    message = "auto: " + re.sub(r"^(auto:\s*)+", "", message)[:200]
     sh(["git", "commit", "-q", "-m", message], wt)
 
 
@@ -462,8 +464,9 @@ class Night:
                   env={**os.environ, "OMP_NUM_THREADS": "1"}, timeout=1800)
         (self.logs / f"{label}_pytest.txt").write_text(proc.stdout + proc.stderr)
         if proc.returncode != 0:
-            tail = [ln for ln in (proc.stdout + proc.stderr).splitlines() if ln.strip()][-2:]
-            return "pytest failed: " + " | ".join(tail)
+            lines = [ln.strip() for ln in (proc.stdout + proc.stderr).splitlines() if ln.strip()]
+            key = [ln for ln in lines if ln.startswith(("FAILED", "ERROR", "E "))][:2] or lines[-2:]
+            return "pytest failed: " + " | ".join(key)
         expected = json.loads((self.auto / "canary.json").read_text())
         got = self.canary(label)
         diff = [k for k in expected if got.get(k) != expected[k]] + [k for k in got if k not in expected]
@@ -485,6 +488,12 @@ class Night:
                  for k in keys]
         return ", ".join(parts) + f"; any other kind {DEFAULT_S100} (prior)"
 
+    def rules(self) -> str:
+        forced = " ".join(forced_overrides([0], self.args.dry_run)).replace("jobs=1", "jobs=<len(seeds)>")
+        forced = forced.replace("eval.seeds=[0]", "eval.seeds=<your trial's seeds>")
+        dry = " DRY RUN: a wiring test, so results say nothing about the methods." if self.args.dry_run else ""
+        return RULES.format(forced=forced) + dry
+
     def plan_deadline(self) -> dt.datetime:
         return self.args.until_dt - dt.timedelta(minutes=REPORT_RESERVE_MIN)
 
@@ -495,7 +504,7 @@ class Night:
 
     def intake(self) -> None:
         before = snapshot(self.wt)
-        prompt = INTAKE_PROMPT.format(rules=RULES, workers=self.args.workers, until=self.args.until_dt.strftime("%H:%M"))
+        prompt = INTAKE_PROMPT.format(rules=self.rules(), workers=self.args.workers, until=self.args.until_dt.strftime("%H:%M"))
         out = self.claude("intake", prompt, INTAKE_SCHEMA)
         errs = check_schema(INTAKE_SCHEMA, out) + self.guard(before, ("auto/plan.md",))
         if not (self.auto / "plan.md").exists():
@@ -681,7 +690,7 @@ class Night:
         self.save()
         prompt = STEP_PROMPT.format(
             step=n, now=dt.datetime.now().strftime("%H:%M"), plan_deadline=self.plan_deadline().strftime("%H:%M"),
-            minutes_left=int(self.minutes_left()), rules=RULES, workers=self.args.workers,
+            minutes_left=int(self.minutes_left()), rules=self.rules(), workers=self.args.workers,
             finished=", ".join(self.state["unreviewed"]) or "none", notes=" | ".join(notes) or "none",
             startup=STARTUP_S, estimates=self.estimates_text(), factor=MAKESPAN_FACTOR)
         before = snapshot(self.wt)
@@ -741,7 +750,7 @@ class Night:
         hours = ", ".join(f"{h[11:]}h: {v['runs']} runs, x{v['ratio_sum'] / max(v['runs'], 1):.2f}"
                           for h, v in sorted(self.state["hours"].items())) or "none"
         prompt = REPORT_PROMPT.format(
-            rules=RULES, steps=self.state["step"], trials=len(read_tsv(self.auto / "results.tsv")), reason=reason,
+            rules=self.rules(), steps=self.state["step"], trials=len(read_tsv(self.auto / "results.tsv")), reason=reason,
             cost=self.state["cost_usd"], violations=" | ".join(self.state["violations"]) or "none",
             failures=" | ".join(self.state["failures"]) or "none",
             overrides=" | ".join(self.state["overrides"]) or "none", throughput=hours)
