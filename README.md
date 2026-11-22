@@ -30,6 +30,27 @@ wave data. It prints one JSON line per run and writes
 `outputs/dropout_baseline/wave/summary.json`. Runs are resumable: a completed
 run with the same config is skipped.
 
+## Options for tuning
+
+Off by default; see `docs/protocol.md`.
+
+- `eval.split=valid`: evaluate on the validation windows instead of the test windows (for tuning; scores are
+  optimistic because validation also drives early stopping). Results record `eval_split`.
+- `methods.<m>.train_options: {...}`: extra keyword arguments for `fit` (only new options added to `model.py`).
+- `sensors.placement: random` or `explicit` (with `sensors.locations: [...]`): other probe placements than block QR.
+- A method can be defined inside an experiment file, without touching `configs/config.yaml`:
+
+```yaml
+# @package _global_
+defaults:
+  - /method@methods.shred_wide: shred
+name: my_experiment
+methods:
+  shred_wide: {hidden_size: 128}
+runs:
+  - {method: shred_wide, train: missing}
+```
+
 ## Layout
 
 ```

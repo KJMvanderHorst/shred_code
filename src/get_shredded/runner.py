@@ -22,6 +22,7 @@ Protocol (identical for every method within a seed; see docs/protocol.md):
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import multiprocessing
 import os
@@ -92,6 +93,37 @@ def output_root(cfg) -> Path:
 
 
 INPUTS = ("probes", "wave_input", "random_input", "shuffled_targets")
+EVAL_SPLITS = ("test", "valid")
+PLACEMENTS = ("qr", "random", "explicit")
+# fit arguments the runner sets itself (each has its own config key); train_options may not override them
+RESERVED_FIT_ARGS = ("model", "train_dataset", "valid_dataset", "batch_size", "num_epochs", "lr", "verbose",
+                     "patience", "augment_fn", "early_stopping", "lr_schedule")
+
+
+def eval_split(cfg) -> str:
+    split = str(cfg.eval.get("split", "test"))
+    if split not in EVAL_SPLITS:
+        raise ValueError(f"eval.split must be one of {EVAL_SPLITS}, got {split!r}")
+    return split
+
+
+def placement(cfg) -> str:
+    kind = str(cfg.sensors.get("placement", "qr"))
+    if kind not in PLACEMENTS:
+        raise ValueError(f"sensors.placement must be one of {PLACEMENTS}, got {kind!r}")
+    return kind
+
+
+def train_options(method) -> dict[str, Any]:
+    """Extra keyword arguments for ``fit`` from ``methods.<m>.train_options``; empty by default."""
+    options = OmegaConf.to_container(method.train_options) if method.get("train_options") is not None else {}
+    params = inspect.signature(fit).parameters
+    for key in options:
+        if key in RESERVED_FIT_ARGS:
+            raise ValueError(f"train_options.{key} is set by the runner; use its own config key")
+        if key not in params:
+            raise ValueError(f"unknown train_options key {key!r}; fit accepts {sorted(set(params) - set(RESERVED_FIT_ARGS))}")
+    return options
 
 
 def run_input(run) -> str:
@@ -249,14 +281,17 @@ class SeedData:
     train_idx: np.ndarray
     valid_idx: np.ndarray
     test_idx: np.ndarray
+    eval_idx: np.ndarray          # windows evaluated: test_idx, or valid_idx with eval.split=valid
     windows: np.ndarray           # (n - lags, lags, C*N) scaled, clean
     sigma: np.ndarray             # (C*N,) unscaled noise std
     sensor_range: np.ndarray      # (C*N,) MinMax range per input column
     valid_noise: np.ndarray       # (V, lags, C*N) unscaled
     valid_rng_state: dict         # validation RNG state after valid_noise; fault masks continue from it
+    # test_noise / test_mask / truth hold the draws for eval_idx (the test windows unless eval.split=valid)
     test_noise: np.ndarray        # (D, T, lags, C*N) unscaled
     test_mask: dict[str, np.ndarray]  # severity ('p0.3', 'k2') -> (D, T, N)
-    truth: np.ndarray             # (T, m) unscaled test targets
+    truth: np.ndarray             # (T, m) unscaled eval targets
+    eval_split: str = "test"
 
     @property
     def lags(self) -> int:
@@ -290,7 +325,18 @@ def prepare_seed(cfg, seed: int, input: str = "probes") -> SeedData:
         test_percentage=float(cfg.data.split[2]),
         seed=seed,
     )
-    locations, U_r = qr_place_probes(load_X[train_idx].T, num_sensors, int(cfg.sensors.rank), n_points)
+    kind = placement(cfg)
+    if kind == "qr":
+        locations, U_r = qr_place_probes(load_X[train_idx].T, num_sensors, int(cfg.sensors.rank), n_points)
+    else:  # same POD basis as qr_place_probes, other probe points
+        U_r = np.linalg.svd(load_X[train_idx].T, full_matrices=False)[0][:, : int(cfg.sensors.rank)]
+        if kind == "random":
+            locations = np.random.default_rng([seed, 7]).choice(n_points, num_sensors, replace=False)
+        else:
+            locations = np.asarray(list(cfg.sensors.get("locations") or []), dtype=int)
+            if len(locations) != num_sensors or len(set(locations.tolist())) != num_sensors \
+                    or locations.min() < 0 or locations.max() >= n_points:
+                raise ValueError(f"sensors.locations must be {num_sensors} distinct grid points in [0, {n_points})")
     state_indices = np.concatenate([locations + c * n_points for c in range(channels)])
     scaler = MinMaxScaler().fit(load_X[train_idx])
     transformed_X = scaler.transform(load_X).astype(np.float32)
@@ -326,22 +372,25 @@ def prepare_seed(cfg, seed: int, input: str = "probes") -> SeedData:
     valid_noise = (rng_val.standard_normal((len(valid_idx), lags, len(state_indices))) * sigma).astype(np.float32)
 
     draws = int(cfg.eval.draws)
-    rng_test = np.random.default_rng([seed, 2])
-    test_noise = (rng_test.standard_normal((draws, len(test_idx), lags, len(state_indices))) * sigma).astype(np.float32)
+    split = eval_split(cfg)
+    # valid: its own stream, so the test ([seed, 2]) and validation ([seed, 1]) streams stay untouched
+    eval_idx, rng_test = (test_idx, np.random.default_rng([seed, 2])) if split == "test" else \
+        (valid_idx, np.random.default_rng([seed, 6]))
+    test_noise = (rng_test.standard_normal((draws, len(eval_idx), lags, len(state_indices))) * sigma).astype(np.float32)
     test_mask = {}
     for _, severity in eval_conditions(cfg).values():
         if severity not in test_mask:  # one mask set per severity, shared by every fault and flags setting
-            test_mask[severity] = _sample_test_mask(severity, draws * len(test_idx), num_sensors, rng_test).reshape(
-                draws, len(test_idx), num_sensors
+            test_mask[severity] = _sample_test_mask(severity, draws * len(eval_idx), num_sensors, rng_test).reshape(
+                draws, len(eval_idx), num_sensors
             )
-    truth = load_X[test_idx + lags - 1]
+    truth = load_X[eval_idx + lags - 1]
     return SeedData(
         seed=seed, load_X=load_X, transformed_X=transformed_X, scaler=scaler, nx=nx, ny=ny,
         n_points=n_points, channels=channels, locations=locations, state_indices=state_indices,
         point_coordinates=point_coordinates, sensor_coordinates=sensor_coordinates, U_r=U_r,
-        train_idx=train_idx, valid_idx=valid_idx, test_idx=test_idx, windows=windows, sigma=sigma,
+        train_idx=train_idx, valid_idx=valid_idx, test_idx=test_idx, eval_idx=eval_idx, windows=windows, sigma=sigma,
         sensor_range=sensor_range, valid_noise=valid_noise, valid_rng_state=rng_val.bit_generator.state,
-        test_noise=test_noise, test_mask=test_mask, truth=truth,
+        test_noise=test_noise, test_mask=test_mask, truth=truth, eval_split=split,
     )
 
 
@@ -436,7 +485,7 @@ def run_config(cfg, run, seed: int) -> dict[str, Any]:
         "seed": int(seed),
         "data": OmegaConf.to_container(cfg.data),
         "sensors": OmegaConf.to_container(cfg.sensors),
-        "placement": "QR-probe-block",
+        "placement": "QR-probe-block" if placement(cfg) == "qr" else placement(cfg),
         "noise_frac": float(cfg.noise_frac),
         "eval": {"draws": int(cfg.eval.draws),
                  "conditions": {k: asdict(spec) for k, (spec, _) in eval_conditions(cfg).items()}},
@@ -451,6 +500,8 @@ def run_config(cfg, run, seed: int) -> dict[str, Any]:
             config["wave_input"] = OmegaConf.to_container(cfg.wave_input)
     if not bool(run.get("early_stopping", True)):
         config["early_stopping"] = False
+    if eval_split(cfg) != "test":
+        config["eval"]["split"] = eval_split(cfg)
     return json.loads(json.dumps(config, default=str))
 
 
@@ -520,13 +571,13 @@ def _train_and_evaluate(cfg, sd: SeedData, run, device: str) -> tuple[dict, dict
     method = cfg.methods[run.method]
     kind = method.kind
     lags = sd.lags
-    panel_windows = np.arange(min(int(cfg.eval.panel_windows), len(sd.test_idx)))
+    panel_windows = np.arange(min(int(cfg.eval.panel_windows), len(sd.eval_idx)))
 
     if kind == "pod":
         lo, hi = sd.scaler.data_min_, sd.scaler.data_max_
-        y_clean = sd.load_X[sd.test_idx + lags - 1][:, sd.state_indices]
+        y_clean = sd.load_X[sd.eval_idx + lags - 1][:, sd.state_indices]
         draws = sd.test_noise.shape[0]
-        test_windows = np.tile(sd.windows[sd.test_idx], (draws, 1, 1))
+        test_windows = np.tile(sd.windows[sd.eval_idx], (draws, 1, 1))
 
         def recon_fn(noise, mask, spec, rng):
             if noise is None:
@@ -569,9 +620,10 @@ def _train_and_evaluate(cfg, sd: SeedData, run, device: str) -> tuple[dict, dict
         batch_size=int(cfg.train.batch_size), num_epochs=int(cfg.train.epochs), lr=float(method.get("lr", cfg.train.lr)),
         verbose=False, patience=int(cfg.train.patience), augment_fn=augment,
         early_stopping=bool(run.get("early_stopping", True)), lr_schedule=str(method.get("lr_schedule", "none")),
+        **train_options(method),
     )
     model.eval()
-    test_windows = sd.windows[sd.test_idx]
+    test_windows = sd.windows[sd.eval_idx]
     draws = sd.test_noise.shape[0]
     with_latent = kind in LATENT_KINDS
 
@@ -599,15 +651,16 @@ def save_seed_info(sd: SeedData, out_dir: Path, panel_windows: int) -> None:
     if path.exists():
         return
     out_dir.mkdir(parents=True, exist_ok=True)
-    panel = np.arange(min(panel_windows, len(sd.test_idx)))
+    panel = np.arange(min(panel_windows, len(sd.eval_idx)))
     tmp = path.with_name(f"seed_info.{os.getpid()}.tmp.npz")  # parallel workers may write the same seed
+    extra = {} if sd.eval_split == "test" else {"eval_split": sd.eval_split, "eval_idx": sd.eval_idx}
     np.savez_compressed(
         tmp,
         locations=sd.locations, state_indices=sd.state_indices, sensor_coordinates=sd.sensor_coordinates,
         point_coordinates=sd.point_coordinates, nx=sd.nx, ny=sd.ny, n_points=sd.n_points, channels=sd.channels,
         sigma=sd.sigma, train_idx=sd.train_idx, valid_idx=sd.valid_idx, test_idx=sd.test_idx,
         test_noise=sd.test_noise, **{f"test_mask_{severity}": mask for severity, mask in sd.test_mask.items()},
-        panel_truth=sd.truth[panel].astype(np.float32), panel_windows=panel,
+        panel_truth=sd.truth[panel].astype(np.float32), panel_windows=panel, **extra,
     )
     os.replace(tmp, path)
 
@@ -634,6 +687,8 @@ def _run_one(cfg, run, seed: int, sds: dict, device: str) -> dict[str, Any]:
         "config_id": config_id, "device": device, "git_commit": _git_commit_short(),
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
+    if sd.eval_split != "test":
+        payload["eval_split"] = sd.eval_split
     try:
         metrics, arrays, model = _train_and_evaluate(cfg, sd, run, device)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -682,6 +737,9 @@ def run_all(cfg) -> list[dict[str, Any]]:
         if run.method not in cfg.methods or run.train not in cfg.corruptions:
             raise ValueError(f"unknown method or train corruption in run {dict(run)}")
         run_input(run)
+        train_options(cfg.methods[run.method])
+    eval_split(cfg)
+    placement(cfg)
     seeds = [int(s) for s in cfg.eval.seeds]
     records: dict[tuple[int, int], dict[str, Any]] = {}
     pending = []
@@ -752,6 +810,8 @@ def build_summary(root: str | Path, runs: list[str], seeds: list[int]) -> dict[s
         if "parameters" in done[0]["metrics"]:
             entry["parameters"] = int(done[0]["metrics"]["parameters"])
         entry["wall_time_s"] = float(np.mean([r["wall_time_s"] for r in done]))
+        if "eval_split" in done[0]:
+            entry["eval_split"] = done[0]["eval_split"]
         summary["runs"][name] = entry
     return summary
 
@@ -771,7 +831,7 @@ def masked_invariance_check(cfg, run, seed: int) -> float:
     model.eval()
     mask = max(sd.test_mask.values(), key=lambda m: m.sum())[0]
     spec = CorruptionSpec(fault="missing")
-    x = _format_inputs(sd, sd.windows[sd.test_idx], sd.test_noise[0], mask, spec, method)
+    x = _format_inputs(sd, sd.windows[sd.eval_idx], sd.test_noise[0], mask, spec, method)
     perturbed = x.copy()
     failed = expand_mask(mask, sd.channels)[:, None, :].repeat(sd.lags, axis=1)
     perturbed[..., : sd.channels * sd.num_sensors][failed] = 1e3
