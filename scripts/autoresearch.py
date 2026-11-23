@@ -25,7 +25,6 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -344,11 +343,12 @@ def compose_trial(experiment: str, seeds: list[int], dry_run: bool):
 def problem_id(cfg) -> str:
     """Hash of everything that defines the reconstruction problem; trials compare only within one problem."""
     from omegaconf import OmegaConf
+    from get_shredded.corruption import spec_dict
     from get_shredded.runner import eval_conditions
 
     spec = {"data": OmegaConf.to_container(cfg.data), "sensors": OmegaConf.to_container(cfg.sensors),
             "noise_frac": float(cfg.noise_frac), "draws": int(cfg.eval.draws),
-            "conditions": {k: asdict(s) for k, (s, _) in eval_conditions(cfg).items()}}
+            "conditions": {k: spec_dict(s) for k, (s, _) in eval_conditions(cfg).items()}}
     return hashlib.sha256(json.dumps(spec, sort_keys=True, default=str).encode()).hexdigest()[:10]
 
 

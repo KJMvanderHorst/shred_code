@@ -1,0 +1,50 @@
+# @package _global_
+# Residual-based fault flags at test time (no training): the random_readings checkpoints detect faulty probes
+# from the residual reading - prediction at the probe, then rerun with those flags.
+# record: experiments/residual_flags/README.md
+name: residual_flags
+device: mps   # the source checkpoints trained on MPS; every variant is evaluated on it
+jobs: 1
+eval:
+  conditions:               # copied from random_readings: same fingerprint, same mask and garbage draws
+    - {corruption: missing, flags: oracle, ps: [0.0, 0.3]}
+    - {corruption: garbage, flags: oracle, ps: [0.3]}
+    - {corruption: garbage, flags: silent, ps: [0.3]}
+    - {corruption: missing, flags: oracle, ks: all}
+    - {corruption: garbage, flags: oracle, ks: all}
+    - {corruption: garbage, flags: silent, ks: all}
+residual_flags:
+  source: random_readings   # checkpoints, splits and draws; evaluated: its garbage ks conditions + noise-free clean
+  sources:                  # runs whose checkpoint lives in another experiment
+    robust_shred_v1__garbage_mixed: residual_flags_train
+  self_influence_runs: [robust_shred_v1__missing, shred_mask__missing, robust_shred_v1__garbage,
+                        robust_shred_v1__garbage_mixed]
+  self_influence_deltas: [1, 3]   # x training std of the probe, offset at the last lag only
+  qs: [0.95, 0.99, 0.999]   # thresholds tau_j = quantile q of the joint score on clean noisy validation
+  soft_q: 0.99              # the q whose flags score detection for the soft variant
+  variants:
+    - {run: shred_mask__missing, flags: oracle}
+    - {run: robust_shred_v1__missing, flags: oracle}
+    - {run: robust_shred_v1__missing, flags: residual, q: 0.95}
+    - {run: robust_shred_v1__missing, flags: residual, q: 0.99}
+    - {run: robust_shred_v1__missing, flags: residual, q: 0.999}
+    - {run: robust_shred_v1__missing, flags: soft}
+    - {run: robust_shred_v1__missing, flags: silent}
+    - {run: shred_mask__missing, flags: residual, q: 0.99}
+    # garbage-trained v1 (silent flags in training: never saw a mask)
+    - {run: robust_shred_v1__garbage, flags: oracle}
+    - {run: robust_shred_v1__garbage, flags: residual, q: 0.95}
+    - {run: robust_shred_v1__garbage, flags: residual, q: 0.99}
+    - {run: robust_shred_v1__garbage, flags: residual, q: 0.999}
+    - {run: robust_shred_v1__garbage, flags: soft}
+    - {run: robust_shred_v1__garbage, flags: silent}
+    # v1 trained on garbage with half the faults flagged (residual_flags_train)
+    - {run: robust_shred_v1__garbage_mixed, flags: oracle}
+    - {run: robust_shred_v1__garbage_mixed, flags: residual, q: 0.95}
+    - {run: robust_shred_v1__garbage_mixed, flags: residual, q: 0.99}
+    - {run: robust_shred_v1__garbage_mixed, flags: residual, q: 0.999}
+    - {run: robust_shred_v1__garbage_mixed, flags: soft}
+    - {run: robust_shred_v1__garbage_mixed, flags: silent}
+    # topk: flag the k highest pass-1 scores, k = true number of faults (upper bound for any ranking rule)
+    - {run: robust_shred_v1__missing, flags: topk}
+    - {run: robust_shred_v1__garbage_mixed, flags: topk}

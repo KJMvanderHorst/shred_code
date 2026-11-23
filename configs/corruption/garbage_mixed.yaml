@@ -1,0 +1,6 @@
+# Garbage where only some faults are flagged: each faulty probe is flagged with probability flag_frac,
+# the rest go in unflagged (residual_flags). Masked models learn to use flags and to cope with silent garbage.
+defaults:
+  - garbage
+flags: oracle
+flag_frac: 0.5
