@@ -9,6 +9,7 @@ defaults:
   - method@methods.shred_mask: shred_mask
   - method@methods.sdn: sdn
   - method@methods.robust_shred_v1: robust_shred_v1
+  - method@methods.robust_shred_v1_residual: robust_shred_v1_residual
   - method@methods.robust_shred_v2: robust_shred_v2
   - method@methods.senseiver_sdn: senseiver_sdn
   - method@methods.gappy_pod: gappy_pod

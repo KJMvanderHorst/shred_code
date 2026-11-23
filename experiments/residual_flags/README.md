@@ -1,7 +1,7 @@
 # residual_flags
 
 **Status:** tentative
-**Code:** branch `exp/residual-flags`, PR #<n>
+**Code:** branch `exp/residual-flags`, PR #22 (merge commit `b029c5f`)
 
 ## Question
 
@@ -167,6 +167,10 @@ Tentative: one flow, 3 seeds, 19 test windows per seed, untuned flag fraction fo
    0.041 / 0.055 / 0.111 for v1-garbage and 0.072 / 0.123 / 0.215 for v1-missing, consistent on every seed. It also
    gives the cleanest scores (gap 6.8 vs 2.2 for v1-missing at k = 1). The price is a higher clean error (0.017 vs
    0.011). Why it also beats v1-garbage is not explained by these runs.
+   **Correction (`residual_v1`, PR after #22):** most of the lead over v1-garbage is an early-stopping effect.
+   v1-garbage stopped at ≈ 300–400 epochs while underfitting; trained all 1000 epochs it reaches 0.029 / 0.034 /
+   0.067 at k = 1 / 2 / 4, against v1-mixed's 0.022 / 0.030 / 0.068 (itself early-stopped). The ordering of the two
+   garbage-trained models is therefore not established; that residual flags lose to no flags is unaffected.
 6. **Step 0 did not predict the failure.** Self-influence ≤ 0.08 and a small linear influence on the other probes
    (≤ 0.08 std per std) said detection should work. Garbage is far outside that small-offset regime and lifts the
    healthy probes' scores much more.

@@ -1,0 +1,18 @@
+# @package _global_
+# v1 trained with its own residual as an input (two passes, shared weights), on unflagged garbage.
+# Compared with v1-garbage / v1-missing (random_readings) and v1-mixed (residual_flags_train) on the same draws.
+# record: experiments/residual_v1/README.md
+name: residual_v1
+device: mps   # same device as the checkpoints it is compared with
+jobs: 3
+runs:
+  - {method: robust_shred_v1_residual, train: garbage}
+  - {method: robust_shred_v1, train: garbage, early_stopping: false}   # check: is v1-garbage held back by early stopping?
+eval:
+  conditions:               # copied from random_readings (masks are drawn in condition order)
+    - {corruption: missing, flags: oracle, ps: [0.0, 0.3]}
+    - {corruption: garbage, flags: oracle, ps: [0.3]}
+    - {corruption: garbage, flags: silent, ps: [0.3]}
+    - {corruption: missing, flags: oracle, ks: all}
+    - {corruption: garbage, flags: oracle, ks: all}
+    - {corruption: garbage, flags: silent, ks: all}

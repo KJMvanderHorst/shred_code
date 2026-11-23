@@ -513,6 +513,8 @@ def fit(
             loss = criterion(model(batch_x), batch_y)
             if hasattr(model, "aux_loss"):
                 loss = loss + model.aux_loss(batch_x)
+            if hasattr(model, "target_aux_loss"):  # a training-only term that needs the targets (ResidualSHREDv1)
+                loss = loss + model.target_aux_loss(batch_y)
             loss.backward()
             optimizer.step()
             epoch_loss += float(loss.item())
