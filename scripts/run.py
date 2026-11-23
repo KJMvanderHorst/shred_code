@@ -9,12 +9,13 @@ from __future__ import annotations
 import hydra
 from omegaconf import DictConfig
 
+from get_shredded.residual_flags import run_residual_flags
 from get_shredded.runner import run_all
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
-    run_all(cfg)
+    run_residual_flags(cfg) if cfg.get("residual_flags") else run_all(cfg)  # test-time-only experiment
 
 
 if __name__ == "__main__":

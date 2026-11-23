@@ -64,12 +64,14 @@ class RobustSHREDv1(nn.Module):
             self.null_key = nn.Parameter(torch.randn(1, 1, hidden_size) * 0.02)
             self.null_value = nn.Parameter(torch.randn(1, 1, hidden_size) * 0.02)
 
-    def latent(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
+    def latent(self, x: Tensor, mask: Tensor | None = None, bias: Tensor | None = None) -> Tensor:
         """Final recurrent hidden state (batch, hidden_size).
 
         x: (batch, lags, input_channels * num_sensors), channel blocks concatenated.
         mask: optional bool (batch, num_sensors), True = sensor missing; masked
         sensors are excluded from attention at every timestep.
+        bias: optional float (batch, num_sensors) added to the probe attention logits at
+        every timestep (soft down-weighting, test time only); the null token is unbiased.
         """
         if x.ndim != 3 or x.shape[-1] != self.input_channels * self.num_sensors:
             raise ValueError("x must have shape (batch, lags, input_channels * num_sensors).")
@@ -81,6 +83,12 @@ class RobustSHREDv1(nn.Module):
         hidden = torch.zeros(batch_size, self.hidden_size, device=device, dtype=x.dtype)
         if self.null_key is not None and mask is not None:
             mask = torch.cat([mask, mask.new_zeros(batch_size, 1)], dim=1)
+        attn_bias = None
+        if bias is not None:
+            if self.null_key is not None:
+                bias = torch.cat([bias, bias.new_zeros(batch_size, 1)], dim=1)
+            # (batch * heads, 1 query, keys), as nn.MultiheadAttention expects a per-sample float mask
+            attn_bias = bias.to(x.dtype).repeat_interleave(self.attention.num_heads, dim=0).unsqueeze(1)
         for timestep in range(x.shape[1]):
             values = x[:, timestep, :].reshape(batch_size, self.input_channels, self.num_sensors).transpose(1, 2)
             embedded = self.sensor_embed(torch.cat([values, positions], dim=-1))
@@ -90,7 +98,8 @@ class RobustSHREDv1(nn.Module):
                 keys = torch.cat([keys, self.null_key.expand(batch_size, -1, -1)], dim=1)
                 sensor_values = torch.cat([sensor_values, self.null_value.expand(batch_size, -1, -1)], dim=1)
             query = self.query_projection(hidden).unsqueeze(1)
-            context, _ = self.attention(query, keys, sensor_values, key_padding_mask=mask, need_weights=False)
+            context, _ = self.attention(query, keys, sensor_values, key_padding_mask=mask, attn_mask=attn_bias,
+                                        need_weights=False)
             hidden = self.gru_cell(context.squeeze(1), hidden)
         return hidden
 

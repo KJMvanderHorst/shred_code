@@ -29,7 +29,7 @@ import os
 import subprocess
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,7 @@ from .corruption import (
     noise_std_from_training,
     sample_dropout_mask,
     sample_exact_k_mask,
+    spec_dict,
     split_masked_input,
 )
 from .data import (
@@ -405,6 +406,8 @@ def _format_inputs(sd: SeedData, windows: np.ndarray, noise: np.ndarray | None, 
         flags = np.zeros((x.shape[0], sd.num_sensors), dtype=np.float32)
         if mask is not None and spec.flags == "oracle":
             flags = mask.astype(np.float32)
+            if spec.flag_frac < 1:  # mixed regime: drawn after the garbage values, from the same rng
+                flags = flags * (rng.random(flags.shape) < spec.flag_frac)
         x = np.concatenate([x, np.repeat(flags[:, None, :], x.shape[1], axis=1)], axis=-1)
     elif method.kind == "sdn":
         x = x[:, -1, :]
@@ -505,11 +508,11 @@ def run_config(cfg, run, seed: int) -> dict[str, Any]:
         "placement": "QR-probe-block" if placement(cfg) == "qr" else placement(cfg),
         "noise_frac": float(cfg.noise_frac),
         "eval": {"draws": int(cfg.eval.draws),
-                 "conditions": {k: asdict(spec) for k, (spec, _) in eval_conditions(cfg).items()}},
+                 "conditions": {k: spec_dict(spec) for k, (spec, _) in eval_conditions(cfg).items()}},
     }
     if method.kind != "pod":
         config["train"] = OmegaConf.to_container(cfg.train)
-        config["train_corruption"] = asdict(corruption_spec(cfg, run.train))
+        config["train_corruption"] = spec_dict(corruption_spec(cfg, run.train))
     # Only when non-default, so earlier runs keep their fingerprints.
     if run_input(run) != "probes":
         config["input"] = run_input(run)

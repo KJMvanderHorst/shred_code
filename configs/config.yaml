@@ -39,6 +39,7 @@ defaults:
   - corruption@corruptions.noise: noise
   - corruption@corruptions.missing: missing
   - corruption@corruptions.garbage: garbage
+  - corruption@corruptions.garbage_mixed: garbage_mixed
   - override hydra/job_logging: disabled
   - override hydra/hydra_logging: disabled
   - _self_

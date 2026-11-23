@@ -13,10 +13,12 @@ Faults (``CorruptionSpec.fault``):
 
 Flags (``CorruptionSpec.flags``), for models that take a mask input:
 ``oracle`` appends the true fault mask, ``silent`` appends an all-zero mask.
+``flag_frac`` < 1 (oracle only) flags each faulty probe with that probability, so the
+rest go in unflagged (mixed regime); 1.0 = every fault flagged (default).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Callable
 
 import numpy as np
@@ -33,6 +35,7 @@ __all__ = [
     "apply_fault",
     "make_augmenter",
     "split_masked_input",
+    "spec_dict",
 ]
 
 FAULTS = ("none", "missing", "garbage")
@@ -48,6 +51,7 @@ class CorruptionSpec:
     fill: float = 0.0
     garbage_mean: float = 0.5
     garbage_std: float = 0.5
+    flag_frac: float = 1.0
 
     def __post_init__(self) -> None:
         if self.fault not in FAULTS:
@@ -56,6 +60,16 @@ class CorruptionSpec:
             raise ValueError(f"flags must be one of {FLAGS}, got {self.flags!r}")
         if self.fault == "none" and self.p > 0:
             raise ValueError("fault 'none' requires p = 0")
+        if not 0.0 <= self.flag_frac <= 1.0:
+            raise ValueError(f"flag_frac must be in [0, 1], got {self.flag_frac}")
+
+
+def spec_dict(spec: CorruptionSpec) -> dict:
+    """asdict for fingerprints; flag_frac only when non-default, so earlier runs keep their config ids."""
+    out = asdict(spec)
+    if out["flag_frac"] == 1.0:
+        del out["flag_frac"]
+    return out
 
 
 def sample_dropout_mask(
@@ -155,6 +169,8 @@ def make_augmenter(
             out = torch.where(full, spec.garbage_mean + spec.garbage_std * torch.randn_like(out), out)
         if mask_input:
             flags = mask.to(out.dtype) if spec.flags == "oracle" else torch.zeros_like(mask, dtype=out.dtype)
+            if spec.flags == "oracle" and spec.flag_frac < 1:  # only then: default keeps the torch RNG stream
+                flags = flags * (torch.rand_like(flags) < spec.flag_frac).to(out.dtype)
             if out.ndim == 3:
                 flags = flags.unsqueeze(1).expand(-1, out.shape[1], -1)
             out = torch.cat([out, flags], dim=-1)
