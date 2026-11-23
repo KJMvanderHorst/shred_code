@@ -5,7 +5,7 @@ from torch import Tensor, nn
 
 from .senseiver import SenseiverEncoder, spatial_positional_encoding
 
-__all__ = ["RobustSHREDv1", "RobustSHREDv2"]
+__all__ = ["RobustSHREDv1", "RobustSHREDv2", "ResidualSHREDv1"]
 
 
 class _SHREDDecoder(nn.Module):
@@ -170,3 +170,46 @@ class RobustSHREDv2(nn.Module):
 
     def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
         return self.decoder(self.latent(x, mask))
+
+
+class ResidualSHREDv1(nn.Module):
+    """RobustSHREDv1 that feeds back its own residual (experiments/residual_v1).
+
+    One v1 network with 2C input channels per probe: the C readings and C residuals. Pass 1 runs with the residual
+    channels at 0; r = last-lag reading - pass-1 prediction at the probe's state index (scaled units, gradient
+    stopped); pass 2 runs the same network with r at every lag and is the output. During training, ``target_aux_loss``
+    adds ``pass1_weight`` x MSE(pass 1) so pass 1 stays a good predictor and its residual stays meaningful.
+    """
+
+    def __init__(self, num_sensors: int, output_size: int, sensor_coordinates: Tensor, probe_index,
+                 input_channels: int = 1, pass1_weight: float = 1.0, **v1_kwargs) -> None:
+        super().__init__()
+        self.net = RobustSHREDv1(num_sensors, output_size, sensor_coordinates, input_channels=2 * input_channels,
+                                 **v1_kwargs)
+        index = torch.as_tensor(probe_index, dtype=torch.long)
+        if index.numel() != input_channels * num_sensors:
+            raise ValueError("probe_index must give the output index of every input column (C * N)")
+        self.register_buffer("probe_index", index)
+        self.pass1_weight = pass1_weight
+        self._pass1 = None  # pass-1 output of the last training forward, for target_aux_loss
+
+    def pass1(self, x: Tensor) -> Tensor:
+        """The network with the residual channels at 0 (also the built-in ablation)."""
+        return self.net(torch.cat([x, torch.zeros_like(x)], dim=-1))
+
+    def _second_input(self, x: Tensor, first: Tensor) -> Tensor:
+        residual = (x[:, -1, :] - first[:, self.probe_index]).detach()
+        return torch.cat([x, residual.unsqueeze(1).expand(-1, x.shape[1], -1)], dim=-1)
+
+    def latent(self, x: Tensor) -> Tensor:
+        return self.net.latent(self._second_input(x, self.pass1(x)))
+
+    def forward(self, x: Tensor) -> Tensor:
+        first = self.pass1(x)
+        self._pass1 = first if self.training else None
+        return self.net(self._second_input(x, first))
+
+    def target_aux_loss(self, y: Tensor) -> Tensor:
+        if self._pass1 is None or self.pass1_weight == 0.0:
+            return y.new_zeros(())
+        return self.pass1_weight * torch.mean((self._pass1 - y) ** 2)

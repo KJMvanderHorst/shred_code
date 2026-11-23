@@ -1,0 +1,13 @@
+# RobustSHRED v1 that feeds back its own residual (reading - pass-1 prediction at the probe) as 2 extra input
+# channels per probe; no mask input (experiments/residual_v1).
+kind: residual_v1
+mask_input: false
+hidden_size: 64
+num_heads: 4
+embed_dim: 32
+num_frequencies: 8
+l1: 350
+l2: 400
+dropout: 0.0
+null_token: true            # learned never-masked token in attention (as robust_shred_v1)
+pass1_weight: 1.0           # x MSE(pass 1) added to the loss, keeps pass 1 a good predictor

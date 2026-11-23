@@ -58,12 +58,12 @@ from .data import (
     split_window_indices,
 )
 from .model import SDN, SHRED, FlowTrunkSHRED, PODSHRED, PODTrunkSHRED, TimeSeriesDataset, TrunkSHRED, fit
-from .robust_shred import RobustSHREDv1, RobustSHREDv2
+from .robust_shred import ResidualSHREDv1, RobustSHREDv1, RobustSHREDv2
 from .senseiver import SenseiverSDN
 from .wave_data import wave_point_coordinates
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-LATENT_KINDS = ("shred", "pod_shred", "pod_trunk_shred", "trunk_shred", "flow_trunk_shred", "senseiver_sdn", "robust_v1", "robust_v2")
+LATENT_KINDS = ("shred", "pod_shred", "pod_trunk_shred", "trunk_shred", "flow_trunk_shred", "senseiver_sdn", "robust_v1", "robust_v2", "residual_v1")
 
 
 def load_config(overrides: list[str] | None = None, config_name: str = "config"):
@@ -482,6 +482,13 @@ def _build_model(sd: SeedData, method, device: str, data=None) -> torch.nn.Modul
             l2=int(method.l2), dropout=float(method.dropout), input_channels=c, null_token=bool(method.null_token),
         )
         model = MaskedInputAdapter(inner, n, c)
+    elif kind == "residual_v1":  # no mask input: the model's own residual is its fault signal
+        model = ResidualSHREDv1(
+            n, m, coords, sd.state_indices, input_channels=c, pass1_weight=float(method.pass1_weight),
+            hidden_size=int(method.hidden_size), num_heads=int(method.num_heads), embed_dim=int(method.embed_dim),
+            num_frequencies=int(method.num_frequencies), l1=int(method.l1), l2=int(method.l2),
+            dropout=float(method.dropout), null_token=bool(method.null_token),
+        )
     elif kind == "robust_v2":
         inner = RobustSHREDv2(
             n, m, coords, num_latents=int(method.num_latents), latent_dim=int(method.latent_dim),
@@ -661,6 +668,14 @@ def _train_and_evaluate(cfg, sd: SeedData, run, device: str) -> tuple[dict, dict
         return sd.scaler.inverse_transform(pred), latent
 
     metrics, arrays = _evaluate(cfg, sd, recon_fn, panel_windows)
+    if kind == "residual_v1":  # built-in ablation: the same network with its residual channels at 0
+        def pass1_fn(noise, mask, spec, rng):
+            base = test_windows if noise is None else np.tile(test_windows, (draws, 1, 1))
+            x = torch.tensor(_format_inputs(sd, base, noise, mask, spec, method, rng), device=device)
+            with torch.no_grad():
+                return sd.scaler.inverse_transform(model.pass1(x).cpu().numpy()), None
+        pass1_metrics, _ = _evaluate(cfg, sd, pass1_fn, panel_windows)
+        metrics.update({f"pass1__{k}": v for k, v in pass1_metrics.items()})
     train_pred, _ = _predict(model, _format_inputs(sd, sd.windows[sd.train_idx], None, None,
                                                    CorruptionSpec(noise=False), method), device, False)
     metrics["train"] = {"err": _aggregate_rel_error(sd.scaler.inverse_transform(train_pred),
