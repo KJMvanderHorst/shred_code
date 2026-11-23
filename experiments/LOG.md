@@ -17,13 +17,13 @@ Conclusion: <what we take from it, or "not written">
 
 ---
 
-## 2026-11-23 · pod_trunk_shred (prototype) · exp · PR #<n> · tentative
+## 2026-11-23 · pod_trunk_shred (prototype) · exp · PR #20 · tentative
 Prototype, user's proposal: POD SHRED at r = 16 whose basis (per-field mean, std, modes) is a continuous trunk T(x, y) (tanh 2 × 256, 16 Fourier frequencies per axis) fitted to the grid basis, so a continuity loss λ × mean (u_x + v_y)² can be added. Adds `PODTrunkSHRED` (kind `pod_trunk_shred`, `train_trunk`, RNG stream 8 for held-out divergence points). Frozen trunk (field loss, coefficient loss, field + λ = 1e-3) and trained trunk (same lr as SHRED, λ = 0 / 1e-3). Nektar (u, v), clean, standard protocol, 3 seeds, CPU.
 Result: test error frozen 0.0077 ± 0.0003 / coef 0.0098 ± 0.0012 / + continuity 0.0074 ± 0.0000; trained 0.0067 ± 0.0008 / + continuity 0.0068 ± 0.0013 (POD SHRED 0.0025). div_rel (autograd) 0.126 in every frozen run, 0.102 trained, 0.095 ± 0.012 trained + continuity; data's own FD divergence 0.003. Exact coefficients through the frozen trunk: 0.0071 (exact basis 2.9e-4); trunk values ≈ 0.5 % off, gradients ≈ 10 %; the best coefficients cancel 0.7 % of the mean field's divergence.
 Conclusion: The trunk fit, not SHRED, sets the error and the divergence. Frozen, the continuity loss cannot act (it only moves coefficients); trained, it adds ≈ 7 % lower divergence, within the seed spread. Prototype only; leads: larger λ, no early stopping, derivative-aware trunk fit, stream-function trunk on a joint (u, v) POD.
 → experiments/pod_shred_nektar/README.md (POD trunk section), notebooks/pod_shred_nektar.ipynb (section 5), docs/protocol.md (POD trunk SHRED row, RNG streams), outputs/pod_shred_nektar/nektar_uv/ (local only)
 
-## 2026-11-23 · pod_shred_nektar · exp · PR #<n> · tentative
+## 2026-11-23 · pod_shred_nektar · exp · PR #20 · tentative
 SHRED predicting POD coefficients instead of the full field (masked-shred pipeline: per field StandardScaler + exact SVD, r = 16 / 32 / 64 modes per field, MinMax per coefficient), with the loss on the decoded field or on the scaled coefficients (as the paper). Adds `PODSHRED` (kind `pod_shred`, `loss_space: field | coef`). Nektar (u, v), clean, 1000 epochs, early stopping, 3 seeds, CPU.
 Result: test error SHRED 0.0021 ± 0.0003 (4.2M params, 43 s/run); POD field loss 0.0025 ± 0.0003 / 0.0027 ± 0.0003 / 0.0028 ± 0.0008 at r = 16 / 32 / 64 (217k–255k params, 12–14 s/run); POD coefficient loss 0.0028 ± 0.0002 / 0.0106 ± 0.0021 / 0.0197 ± 0.0036 (7–8 s/run). Projection floor 2.9e-4 / 2.4e-6 / 1.6e-6. Train error ≈ test error everywhere; POD runs stop at ≈ 410–510 epochs vs ≈ 710.
 Conclusion: Field-loss POD is ≈ 3× cheaper and ≈ 20 % less accurate than the full-field output (≈ one seed std). The paper's coefficient loss degrades with rank on this low-rank wake: near-empty modes are scaled to [0, 1] and weigh as much as the energetic ones. On this setup the output layer, not the encoder, sets SHRED's cost per epoch.

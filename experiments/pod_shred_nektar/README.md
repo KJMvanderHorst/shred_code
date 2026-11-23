@@ -1,7 +1,7 @@
 # pod_shred_nektar
 
 **Status:** tentative
-**Code:** branch `exp/pod-shred-nektar`, PR #<n>
+**Code:** branch `exp/pod-shred-nektar`, PR #20
 
 ## Question
 
