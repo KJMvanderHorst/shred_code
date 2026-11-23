@@ -1,0 +1,12 @@
+# SHRED predicting POD coefficients (masked-shred pipeline): per-field StandardScaler + SVD, `rank` modes per
+# field, MinMax per coefficient. loss_space: field (decoded field, as SHRED) | coef (scaled coefficients).
+kind: pod_shred
+mask_input: false
+recurrent_cell: gru
+hidden_size: 64
+hidden_layers: 2
+l1: 350
+l2: 400
+dropout: 0.0
+rank: 16
+loss_space: field

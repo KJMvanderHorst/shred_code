@@ -56,13 +56,13 @@ from .data import (
     qr_place_probes,
     split_window_indices,
 )
-from .model import SDN, SHRED, FlowTrunkSHRED, TimeSeriesDataset, TrunkSHRED, fit
+from .model import SDN, SHRED, FlowTrunkSHRED, PODSHRED, PODTrunkSHRED, TimeSeriesDataset, TrunkSHRED, fit
 from .robust_shred import RobustSHREDv1, RobustSHREDv2
 from .senseiver import SenseiverSDN
 from .wave_data import wave_point_coordinates
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-LATENT_KINDS = ("shred", "trunk_shred", "flow_trunk_shred", "senseiver_sdn", "robust_v1", "robust_v2")
+LATENT_KINDS = ("shred", "pod_shred", "pod_trunk_shred", "trunk_shred", "flow_trunk_shred", "senseiver_sdn", "robust_v1", "robust_v2")
 
 
 def load_config(overrides: list[str] | None = None, config_name: str = "config"):
@@ -445,6 +445,23 @@ def _build_model(sd: SeedData, method, device: str, data=None) -> torch.nn.Modul
             num_frequencies=int(method.num_frequencies), physics_weight=float(method.physics_weight),
             n_colloc=int(method.n_colloc),
         )
+    elif kind == "pod_shred":
+        model = PODSHRED(c * n, sd.load_X[sd.train_idx], c, int(method.rank), sd.scaler.scale_, sd.scaler.min_,
+                         hidden_size=int(method.hidden_size), hidden_layers=int(method.hidden_layers),
+                         l1=int(method.l1), l2=int(method.l2), dropout=float(method.dropout),
+                         recurrent_cell=str(method.recurrent_cell))
+    elif kind == "pod_trunk_shred":
+        if data is None or str(data.source) != "nektar" or c != 2:
+            raise ValueError("pod_trunk_shred needs Nektar u, v data (continuity is a 2D (u, v) constraint)")
+        model = PODTrunkSHRED(
+            c * n, sd.load_X[sd.train_idx], c, int(method.rank), sd.scaler.scale_, sd.scaler.min_,
+            sd.point_coordinates, trunk_width=int(method.trunk_width), trunk_layers=int(method.trunk_layers),
+            num_frequencies=int(method.num_frequencies), fit_steps=int(method.fit_steps), fit_lr=float(method.fit_lr),
+            physics_weight=float(method.physics_weight), n_colloc=int(method.n_colloc),
+            train_trunk=bool(method.get("train_trunk", False)),
+            hidden_size=int(method.hidden_size), hidden_layers=int(method.hidden_layers), l1=int(method.l1),
+            l2=int(method.l2), dropout=float(method.dropout), recurrent_cell=str(method.recurrent_cell),
+        )
     elif kind == "sdn":
         model = SDN(c * n, m, l1=int(method.l1), l2=int(method.l2), dropout=float(method.dropout))
     elif kind == "senseiver_sdn":
@@ -603,7 +620,14 @@ def _train_and_evaluate(cfg, sd: SeedData, run, device: str) -> tuple[dict, dict
     np.random.seed(sd.seed)
     model = _build_model(sd, method, device, cfg.data)
 
+    loss_space = str(method.get("loss_space", "field"))
+    if loss_space not in ("field", "coef") or (loss_space == "coef" and kind not in ("pod_shred", "pod_trunk_shred")):
+        raise ValueError(f"{run_name(run)}: loss_space must be 'field', or 'coef' for the POD kinds")
+
     def targets(idx: np.ndarray) -> torch.Tensor:
+        if loss_space == "coef":  # train model.shred on the scaled POD coefficients of the clean targets
+            with torch.no_grad():
+                return model.coefficient_targets(torch.tensor(sd.load_X[idx + lags - 1], device=device))
         return torch.tensor(sd.transformed_X[idx + lags - 1], device=device)
 
     train_x = sd.windows[sd.train_idx][:, -1, :] if kind == "sdn" else sd.windows[sd.train_idx]
@@ -614,7 +638,7 @@ def _train_and_evaluate(cfg, sd: SeedData, run, device: str) -> tuple[dict, dict
     augment = make_augmenter(spec, sd.sigma / sd.sensor_range, sd.num_sensors, channels=sd.channels,
                              mask_input=bool(method.mask_input))
     history = fit(
-        model,
+        model.shred if loss_space == "coef" else model,
         TimeSeriesDataset(torch.tensor(train_x, device=device), targets(sd.train_idx)),
         TimeSeriesDataset(torch.tensor(valid_x, device=device), targets(sd.valid_idx)),
         batch_size=int(cfg.train.batch_size), num_epochs=int(cfg.train.epochs), lr=float(method.get("lr", cfg.train.lr)),
@@ -643,6 +667,12 @@ def _train_and_evaluate(cfg, sd: SeedData, run, device: str) -> tuple[dict, dict
     metrics["parameters"] = _parameter_count(model)
     if with_latent:
         metrics["latent_dim"] = int(arrays["latent_clean"].shape[1])
+    if kind == "pod_trunk_shred":
+        metrics["trunk_fit"] = model.fit_report
+        metrics["trunk_parameters"] = sum(p.numel() for p in model.trunk.parameters())  # in `parameters` too if trained
+        frac = np.random.default_rng([sd.seed, 8]).random((1024, 2)).astype(np.float32)  # held-out points
+        clean = _format_inputs(sd, sd.windows[sd.eval_idx], None, None, CorruptionSpec(noise=False), method)
+        metrics["div_rel"] = model.divergence_rel(torch.tensor(clean, device=device), torch.tensor(frac, device=device))
     return metrics, arrays, model
 
 
