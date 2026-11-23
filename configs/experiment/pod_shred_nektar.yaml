@@ -1,0 +1,29 @@
+# @package _global_
+# Does SHRED do better, or train faster, predicting POD coefficients instead of the full field, and does the loss
+# space (decoded field vs MinMax-scaled coefficients, as in masked-shred) matter? Clean, standard protocol.
+# record: experiments/pod_shred_nektar/README.md
+#   uv run python scripts/run.py +experiment=pod_shred_nektar
+defaults:
+  - /method@methods.pod_shred_r32: pod_shred
+  - /method@methods.pod_shred_r64: pod_shred
+  - /method@methods.pod_shred_coef_r16: pod_shred
+  - /method@methods.pod_shred_coef_r32: pod_shred
+  - /method@methods.pod_shred_coef_r64: pod_shred
+name: pod_shred_nektar
+methods:
+  pod_shred_r32: {rank: 32}
+  pod_shred_r64: {rank: 64}
+  pod_shred_coef_r16: {rank: 16, loss_space: coef}
+  pod_shred_coef_r32: {rank: 32, loss_space: coef}
+  pod_shred_coef_r64: {rank: 64, loss_space: coef}
+runs:
+  - {method: shred, train: clean}               # full field (10 000 outputs on Nektar)
+  - {method: pod_shred, train: clean}           # r = 16 per field, loss on the decoded field
+  - {method: pod_shred_r32, train: clean}
+  - {method: pod_shred_r64, train: clean}
+  - {method: pod_shred_coef_r16, train: clean}  # loss and early stopping on the scaled coefficients
+  - {method: pod_shred_coef_r32, train: clean}
+  - {method: pod_shred_coef_r64, train: clean}
+eval:
+  conditions:
+    - {corruption: clean, flags: oracle, ps: [0.0]}

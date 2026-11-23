@@ -15,6 +15,7 @@ __all__ = [
     "SDN",
     "TrunkSHRED",
     "FlowTrunkSHRED",
+    "PODSHRED",
     "divergence",
     "wave_residual",
     "TimeSeriesDataset",
@@ -287,6 +288,53 @@ class FlowTrunkSHRED(SHRED):
         xy = (self.lo + torch.rand(x.shape[0], self.n_colloc, 2, device=x.device) * self.span).requires_grad_()
         uv = torch.einsum("bcp,bqcp->bqc", b, self.basis(xy)) + self.bias
         return self.physics_weight * divergence(uv[..., 0], uv[..., 1], xy).square().mean()
+
+
+class PODSHRED(nn.Module):
+    """SHRED predicting POD coefficients, with the basis built the masked-shred way: per field (channel block of
+    the state) StandardScaler on the training snapshots, SVD, ``rank`` modes per field, MinMax per coefficient.
+
+    ``self.shred`` maps a window to the 2r (C r) MinMax-scaled coefficients; ``forward`` decodes them to the field,
+    MinMax-scaled like SHRED's targets (u * out_scale + out_offset), so it can be trained on the field (loss in field
+    space) or ``self.shred`` on ``coefficient_targets`` (loss in coefficient space), with the same evaluation.
+    """
+
+    def __init__(self, input_size: int, train_X, channels: int, rank: int, out_scale, out_offset,
+                 **shred_kwargs) -> None:
+        super().__init__()
+        X = torch.as_tensor(train_X, dtype=torch.float64)
+        n, m = X.shape
+        self.channels, self.rank, self.points = int(channels), int(rank), m // int(channels)
+        if self.rank > min(n, self.points):
+            raise ValueError(f"rank {rank} exceeds the {n} training snapshots or {self.points} points per field")
+        mean, std = X.mean(0), X.std(0, unbiased=False)
+        std = torch.where(std == 0, torch.ones_like(std), std)  # as StandardScaler: constant columns unscaled
+        z = ((X - mean) / std).unflatten(-1, (self.channels, self.points))
+        Vt = torch.stack([torch.linalg.svd(z[:, c], full_matrices=False)[2][: self.rank]
+                          for c in range(self.channels)])  # (C, r, points), exact SVD (the paper: randomized)
+        a = torch.einsum("ncp,crp->ncr", z, Vt).flatten(1)
+        lo, span = a.min(0).values, a.max(0).values - a.min(0).values
+        span = torch.where(span == 0, torch.ones_like(span), span)
+        for name, value in (("mean", mean), ("std", std), ("Vt", Vt), ("coef_min", lo), ("coef_range", span),
+                            ("out_scale", torch.as_tensor(out_scale)), ("out_offset", torch.as_tensor(out_offset))):
+            self.register_buffer(name, value.float())
+        self.shred = SHRED(input_size, self.channels * self.rank, **shred_kwargs)
+
+    def latent(self, x: torch.Tensor) -> torch.Tensor:
+        return self.shred.latent(x)
+
+    def decode(self, scaled_coefficients: torch.Tensor) -> torch.Tensor:
+        a = (scaled_coefficients * self.coef_range + self.coef_min).unflatten(-1, (self.channels, self.rank))
+        u = torch.einsum("bcr,crp->bcp", a, self.Vt).flatten(1) * self.std + self.mean
+        return u * self.out_scale + self.out_offset
+
+    def coefficient_targets(self, X: torch.Tensor) -> torch.Tensor:
+        """Unscaled snapshots (B, m) -> MinMax-scaled coefficients (B, C r)."""
+        z = ((X - self.mean) / self.std).unflatten(-1, (self.channels, self.points))
+        return (torch.einsum("bcp,crp->bcr", z, self.Vt).flatten(1) - self.coef_min) / self.coef_range
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.decode(self.shred(x))
 
 
 class SDN(nn.Module):

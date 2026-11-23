@@ -12,6 +12,7 @@ defaults:
   - method@methods.robust_shred_v2: robust_shred_v2
   - method@methods.senseiver_sdn: senseiver_sdn
   - method@methods.gappy_pod: gappy_pod
+  - method@methods.pod_shred: pod_shred
   - method@methods.trunk_shred: trunk_shred
   - method@methods.trunk_shred_pinn: trunk_shred_pinn
   - method@methods.trunk_shred_noff: trunk_shred_noff
