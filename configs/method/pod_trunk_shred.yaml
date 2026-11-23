@@ -1,0 +1,19 @@
+# POD SHRED with the POD basis (per-field mean, std, rank modes) as a frozen continuous trunk T(x, y), fitted once
+# per seed (flow trunk architecture). Nektar u, v only. physics_weight: lambda x mean (u_x + v_y)^2 through the trunk.
+kind: pod_trunk_shred
+mask_input: false
+recurrent_cell: gru
+hidden_size: 64
+hidden_layers: 2
+l1: 350
+l2: 400
+dropout: 0.0
+rank: 16
+loss_space: field
+trunk_width: 256
+trunk_layers: 2
+num_frequencies: 16
+fit_steps: 5000
+fit_lr: 1.0e-3
+physics_weight: 0.0
+n_colloc: 64

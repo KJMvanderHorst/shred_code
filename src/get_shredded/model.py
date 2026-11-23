@@ -16,6 +16,7 @@ __all__ = [
     "TrunkSHRED",
     "FlowTrunkSHRED",
     "PODSHRED",
+    "PODTrunkSHRED",
     "divergence",
     "wave_residual",
     "TimeSeriesDataset",
@@ -335,6 +336,107 @@ class PODSHRED(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.decode(self.shred(x))
+
+
+class PODTrunkSHRED(PODSHRED):
+    """PODSHRED whose basis (per-field mean, std and modes) is a frozen continuous trunk T(x, y): the flow trunk's
+    tanh MLP on Fourier features of (x, y), fitted once in ``__init__`` to the grid POD basis (full batch, Adam).
+    ``decode`` uses the trunk at the grid (cached), ``coefficient_targets`` the true POD coefficients, and
+    ``field_at`` evaluates u, v anywhere, so ``aux_loss`` (``physics_weight`` x mean (u_x + v_y)^2 on random points
+    in the grid's box, physical units) differentiates through the trunk."""
+
+    def __init__(self, input_size: int, train_X, channels: int, rank: int, out_scale, out_offset, coords,
+                 trunk_width: int = 256, trunk_layers: int = 2, num_frequencies: int = 16, fit_steps: int = 5000,
+                 fit_lr: float = 1e-3, physics_weight: float = 0.0, n_colloc: int = 64, train_trunk: bool = False,
+                 **shred_kwargs) -> None:
+        super().__init__(input_size, train_X, channels, rank, out_scale, out_offset, **shred_kwargs)
+        C, r, P = self.channels, self.rank, self.points
+        coords = torch.as_tensor(coords, dtype=torch.float32)
+        self.register_buffer("coords", coords)
+        self.register_buffer("lo", coords.min(0).values)
+        self.register_buffer("span", coords.max(0).values - coords.min(0).values)
+        self.num_frequencies = int(num_frequencies)
+        self.physics_weight, self.n_colloc = float(physics_weight), int(n_colloc)
+        self.train_trunk = bool(train_trunk)
+        # targets per point: [mean, std, sqrt(P) * modes] per field, so every column is O(1)
+        target = torch.cat([self.mean.view(C, P, 1), self.std.view(C, P, 1),
+                            self.Vt.permute(0, 2, 1) * P**0.5], dim=-1).permute(1, 0, 2).flatten(1)
+        t_mu, t_sd = target.mean(0), target.std(0)
+        t_sd = torch.where(t_sd == 0, torch.ones_like(t_sd), t_sd)
+        self.register_buffer("t_mu", t_mu)
+        self.register_buffer("t_sd", t_sd)
+        layers, width = [], 2 * 2 * self.num_frequencies
+        for _ in range(trunk_layers):
+            layers += [nn.Linear(width, trunk_width), nn.Tanh()]
+            width = trunk_width
+        self.trunk = nn.Sequential(*layers, nn.Linear(width, C * (r + 2)))
+        z, goal = self._encode(coords), (target - t_mu) / t_sd
+        optimizer = torch.optim.Adam(self.trunk.parameters(), lr=fit_lr)
+        for _ in range(int(fit_steps)):
+            optimizer.zero_grad()
+            loss = (self.trunk(z) - goal).square().mean()
+            loss.backward()
+            optimizer.step()
+        self.trunk.requires_grad_(self.train_trunk)  # train_trunk: SHRED's field and physics losses keep training it
+        with torch.no_grad():
+            out = self.basis_at(coords)  # (P, C, r + 2)
+        self.register_buffer("mean_fit", out[..., 0].T.reshape(-1))
+        self.register_buffer("std_fit", out[..., 1].T.reshape(-1))
+        self.register_buffer("Vt_fit", out[..., 2:].permute(1, 2, 0) / P**0.5)
+        gram = torch.einsum("crp,csp->crs", self.Vt_fit, self.Vt_fit) - torch.eye(r)
+        rel = lambda a, b: float(torch.linalg.norm(a - b) / torch.linalg.norm(b))  # noqa: E731
+        self.fit_report = {
+            "mode_error": torch.linalg.norm(self.Vt_fit - self.Vt, dim=-1).tolist(),  # (C, r); true modes unit norm
+            "mean_error": rel(self.mean_fit, self.mean), "std_error": rel(self.std_fit, self.std),
+            "gram_max_dev": float(gram.abs().max()), "final_fit_loss": float(loss.detach()),
+        }
+
+    def _encode(self, xy: torch.Tensor) -> torch.Tensor:
+        return spatial_positional_encoding((xy - self.lo) / self.span, self.num_frequencies)
+
+    def basis_at(self, xy: torch.Tensor) -> torch.Tensor:
+        """Trunk at physical (..., 2) points -> (..., C, r + 2): [mean, std, sqrt(P) * modes] per field."""
+        return (self.trunk(self._encode(xy)) * self.t_sd + self.t_mu).unflatten(-1, (self.channels, self.rank + 2))
+
+    def grid_basis(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """(modes (C, r, P), std (C*P,), mean (C*P,)) at the grid: cached when frozen, from the trunk when trained."""
+        if not self.train_trunk:
+            return self.Vt_fit, self.std_fit, self.mean_fit
+        out = self.basis_at(self.coords)
+        return out[..., 2:].permute(1, 2, 0) / self.points**0.5, out[..., 1].T.reshape(-1), out[..., 0].T.reshape(-1)
+
+    def decode(self, scaled_coefficients: torch.Tensor) -> torch.Tensor:
+        a = (scaled_coefficients * self.coef_range + self.coef_min).unflatten(-1, (self.channels, self.rank))
+        modes, std, mean = self.grid_basis()
+        u = torch.einsum("bcr,crp->bcp", a, modes).flatten(1) * std + mean
+        return u * self.out_scale + self.out_offset
+
+    def field_at(self, scaled_coefficients: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
+        """Physical fields at points xy (B, Q, 2) -> (B, Q, C)."""
+        a = (scaled_coefficients * self.coef_range + self.coef_min).unflatten(-1, (self.channels, self.rank))
+        T = self.basis_at(xy)
+        return T[..., 0] + T[..., 1] * torch.einsum("bcr,bqcr->bqc", a, T[..., 2:]) / self.points**0.5
+
+    def aux_loss(self, x: torch.Tensor) -> torch.Tensor:
+        if self.physics_weight == 0.0:
+            return x.new_zeros(())
+        xy = (self.lo + torch.rand(x.shape[0], self.n_colloc, 2, device=x.device) * self.span).requires_grad_()
+        uv = self.field_at(self.shred(x), xy)
+        return self.physics_weight * divergence(uv[..., 0], uv[..., 1], xy).square().mean()
+
+    def divergence_rel(self, x: torch.Tensor, frac: torch.Tensor) -> dict[str, float]:
+        """rms(u_x + v_y) / rms|grad u| of the predicted fields at points lo + frac * span (held out) and at the grid."""
+        with torch.no_grad():
+            s = self.shred(x)
+        out = {}
+        for name, pts in (("held_out", self.lo + frac * self.span), ("grid", self.coords)):
+            xy = pts.expand(x.shape[0], -1, -1).clone().requires_grad_()
+            uv = self.field_at(s, xy)
+            gu = torch.autograd.grad(uv[..., 0].sum(), xy, retain_graph=True)[0]
+            gv = torch.autograd.grad(uv[..., 1].sum(), xy)[0]
+            div = gu[..., 0] + gv[..., 1]
+            out[name] = float(div.square().mean().sqrt() / (gu.square().sum(-1) + gv.square().sum(-1)).mean().sqrt())
+        return out
 
 
 class SDN(nn.Module):
